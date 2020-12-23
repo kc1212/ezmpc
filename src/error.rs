@@ -1,11 +1,15 @@
 use crate::message::{SyncMsg, SyncMsgReply};
+use crate::vm;
 use crossbeam_channel;
 
 quick_error! {
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug)]
     pub enum SomeError {
         EvalError {
             display("evaluation error")
+        }
+        NoneError {
+            display("none error")
         }
         RecvError(err: crossbeam_channel::RecvError) {
             from()
@@ -17,6 +21,12 @@ quick_error! {
             from()
         }
         SendErrorReply(err: crossbeam_channel::SendError<SyncMsgReply>) {
+            from()
+        }
+        SendErrorAction(err: crossbeam_channel::SendError<vm::Action>) {
+            from()
+        }
+        SendErrorInstruction(err: crossbeam_channel::SendError<vm::Instruction>) {
             from()
         }
     }

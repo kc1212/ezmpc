@@ -3,6 +3,7 @@ mod error;
 mod machine;
 mod message;
 mod synchronizer;
+mod vm;
 
 extern crate crossbeam_channel;
 extern crate ff;
@@ -57,6 +58,6 @@ mod tests {
         let two = Fp::one() + Fp::one();
         assert!(answer.1.is_empty());
         assert_eq!(answer.0[0], two);
-        assert_eq!(Ok(()), sync_handle.join().unwrap());
+        assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
 }

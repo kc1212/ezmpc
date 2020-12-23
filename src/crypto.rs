@@ -156,20 +156,18 @@ mod tests {
         assert_eq!(d, y - combine(&b_boxes));
 
         let ed = &e * &d;
-        let ed_boxes = share(&ed, n, rng);
 
         let r_boxes = random_sharing(n, rng);
-        let z_boxes = izip!(&c_boxes, &b_boxes, &a_boxes, &ed_boxes)
-            .map(|(c_box, b_box, a_box, ed_box)| {
+        let z_boxes = izip!(&c_boxes, &b_boxes, &a_boxes)
+            .map(|(c_box, b_box, a_box)| {
                 let mut v = c_box.clone();
                 v.add_assign(&(&e * b_box));
                 v.add_assign(&(&d * a_box));
-                v.add_assign(&ed_box);
                 v
             })
             .collect();
 
-        let z = combine(&z_boxes);
+        let mut z = combine(&z_boxes) + ed;
         assert_eq!(x * y, z);
     }
 
