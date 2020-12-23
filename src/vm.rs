@@ -5,13 +5,13 @@ use std::time::Duration;
 use std::thread;
 use std::thread::JoinHandle;
 
-type MemAddr = usize;
 type RegAddr= usize;
 type PartyID = usize;
 
+const REG_SIZE: usize = 128;
+
 struct VM {
-    register: [Option<Fp>; 8],
-    memory: [Option<Fp>; 128],
+    register: [Option<Fp>; REG_SIZE],
     id: PartyID,
 }
 
@@ -29,8 +29,6 @@ pub enum Instruction {
     MUL(RegAddr, RegAddr, RegAddr),
     TRIPLE(RegAddr, RegAddr, RegAddr),
     OPEN(RegAddr, RegAddr),
-    STORE(MemAddr, RegAddr),
-    LOAD(RegAddr, MemAddr),
     OUTPUT(RegAddr),
     STOP,
 }
@@ -43,17 +41,16 @@ fn wrap_option<T>(v: Option<T>) -> Result<T, SomeError> {
 }
 
 impl VM {
-    pub fn spawn(id: PartyID, mem: [Option<Fp>; 128], i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
+    pub fn spawn(id: PartyID, reg: [Option<Fp>; REG_SIZE], i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
-            let mut vm = VM::new(id, mem);
+            let mut vm = VM::new(id, reg);
             vm.listen(i_chan, o_chan)
         })
     }
 
-    fn new(id: PartyID, memory: [Option<Fp>; 128]) -> VM {
+    fn new(id: PartyID, reg: [Option<Fp>; REG_SIZE]) -> VM {
         VM {
-            register: [None; 8],
-            memory,
+            register: reg,
             id,
         }
     }
@@ -77,10 +74,6 @@ impl VM {
                     self.process_triple(r0, r1, r2, &o_chan)?,
                 Instruction::OPEN(to, from) =>
                     self.process_open(to, from, &o_chan)?,
-                Instruction::STORE(to, from) =>
-                    o_chan.send(self.do_store(to, from)?)?,
-                Instruction::LOAD(to, from) =>
-                    o_chan.send(self.do_load(to, from)?)?,
                 Instruction::OUTPUT(reg) => {
                     output.push(wrap_option(self.register[reg])?);
                     o_chan.send(Action::None)?
@@ -117,16 +110,6 @@ impl VM {
             self.register[r0] = self.register[r1];
             Ok(Action::None)
         }
-    }
-
-    fn do_load(&mut self, to: RegAddr, from: MemAddr) -> Result<Action, SomeError> {
-        self.register[to] = self.memory[from];
-        Ok(Action::None)
-    }
-
-    fn do_store(&mut self, to: MemAddr, from: RegAddr) -> Result<Action, SomeError> {
-        self.memory[to] = self.register[from];
-        Ok(Action::None)
     }
 
     fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, o_chan: &Sender<Action>) -> Result<(), SomeError> {
@@ -167,11 +150,11 @@ mod test {
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
     use ff::Field;
 
-    fn single_vm_runner(instructions: Vec<Instruction>, mem: [Option<Fp>; 128]) -> Result<Vec<Fp>, SomeError> {
+    fn single_vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE]) -> Result<Vec<Fp>, SomeError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
-        let handle = VM::spawn(0, mem, r_instruction_chan, s_action_chan);
+        let handle = VM::spawn(0, reg, r_instruction_chan, s_action_chan);
         for instruction in instructions {
             s_instruction_chan.send(instruction)?;
             if instruction == Instruction::STOP {
@@ -189,16 +172,14 @@ mod test {
 
     fn compute_op(a: Fp, b: Fp, is_add: bool) -> Fp {
         let prog = vec![
-            Instruction::LOAD(0, 0),
-            Instruction::LOAD(1, 1),
             if is_add {Instruction::ADD(2, 1, 0)} else {Instruction::MUL(2, 1, 0)},
             Instruction::OUTPUT(2),
             Instruction::STOP,
         ];
-        let mut mem = [None; 128];
-        mem[0] = Some(a);
-        mem[1] = Some(b);
-        let result = single_vm_runner(prog, mem).unwrap();
+        let mut reg= [None; REG_SIZE];
+        reg[0] = Some(a);
+        reg[1] = Some(b);
+        let result = single_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
     }
