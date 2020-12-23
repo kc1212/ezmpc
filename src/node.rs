@@ -8,14 +8,14 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-pub struct Machine {
+pub struct Node {
     o_chans: Sender<SyncMsgReply>,
     i_chans: Receiver<SyncMsg>,
     triple_chan: Receiver<TripleMsg>,
     instructions: Vec<vm::Instruction>,
 }
 
-impl Machine {
+impl Node {
     pub fn spawn(
         id: vm::PartyID,
         o_chans: Sender<SyncMsgReply>,
@@ -25,7 +25,7 @@ impl Machine {
         reg: vm::Reg,
     ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
-            let mut s = Machine {
+            let mut s = Node {
                 o_chans,
                 i_chans,
                 triple_chan,

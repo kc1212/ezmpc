@@ -1,6 +1,6 @@
 mod crypto;
 mod error;
-mod machine;
+mod node;
 mod message;
 mod synchronizer;
 mod vm;
@@ -21,7 +21,7 @@ extern crate test_env_log;
 mod tests {
 
     use crate::crypto::Fp;
-    use crate::machine::Machine;
+    use crate::node::Node;
     use crate::message::*;
     use crate::synchronizer::Synchronizer;
     use crossbeam_channel::{bounded, Receiver, Sender};
@@ -53,7 +53,7 @@ mod tests {
         let one = Fp::one();
         let two = one + one;
         let sync_handle = Synchronizer::spawn(sync_chans.0, sync_chans.1);
-        let machine_handle = Machine::spawn(
+        let machine_handle = Node::spawn(
             0,
             machine_chans.0[0].clone(),
             machine_chans.1[0].clone(),
