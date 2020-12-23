@@ -1,3 +1,4 @@
+use crate::crypto::Fp;
 use crate::message::{SyncMsg, SyncMsgReply};
 use crate::vm;
 use crossbeam_channel;
@@ -27,6 +28,12 @@ quick_error! {
             from()
         }
         SendErrorInstruction(err: crossbeam_channel::SendError<vm::Instruction>) {
+            from()
+        }
+        SendErrorTriple(err: crossbeam_channel::SendError<(Fp, Fp, Fp)>) {
+            from()
+        }
+        SendErrorFp(err: crossbeam_channel::SendError<Fp>) {
             from()
         }
     }

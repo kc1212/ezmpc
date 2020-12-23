@@ -149,8 +149,16 @@ mod test {
     use rand::{Rng, SeedableRng, XorShiftRng};
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
     use ff::Field;
+    use crate::crypto::generate_triple;
+    use crate::message::Inst;
 
-    fn single_vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE]) -> Result<Vec<Fp>, SomeError> {
+    fn simple_vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE]) -> Result<Vec<Fp>, SomeError> {
+        let (_, dummy_open_chan) = bounded(5);
+        let (_, dummy_triple_chan) = bounded(5);
+        vm_runner(instructions, reg, dummy_open_chan, dummy_triple_chan)
+    }
+
+    fn vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE], open_chan: Receiver<Fp>, triple_chan: Receiver<(Fp, Fp, Fp)>) -> Result<Vec<Fp>, SomeError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
@@ -163,7 +171,14 @@ mod test {
             let reply = r_action_chan.recv_timeout(Duration::from_secs(1))?;
             match reply {
                 Action::None => (),
-                _ => panic!("unexpected action"),
+                Action::Open(_, sender) => {
+                    let x = open_chan.recv_timeout(Duration::from_secs(1))?;
+                    sender.send(x)?
+                }
+                Action::Triple(sender) => {
+                    let triple = triple_chan.recv_timeout(Duration::from_secs(1))?;
+                    sender.send(triple)?
+                }
             }
         }
 
@@ -179,14 +194,30 @@ mod test {
         let mut reg= [None; REG_SIZE];
         reg[0] = Some(a);
         reg[1] = Some(b);
-        let result = single_vm_runner(prog, reg).unwrap();
+        let result = simple_vm_runner(prog, reg).unwrap();
+        assert_eq!(result.len(), 1);
+        result[0]
+    }
+
+    fn compute_add_to_party(a: Fp, b: Fp, id: PartyID) -> Fp {
+        let prog = vec![
+            Instruction::ADDP(2, 1, 0, id),
+            Instruction::OUTPUT(2),
+            Instruction::STOP,
+        ];
+
+        let mut reg= [None; REG_SIZE];
+        reg[0] = Some(a);
+        reg[1] = Some(b);
+        let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
     }
 
     #[test]
     fn test_add() {
-        assert_eq!(compute_op(Fp::one(), Fp::one(), true), Fp::one() + Fp::one());
+        let one = Fp::one();
+        assert_eq!(compute_op(one, one, true), one + one);
 
         let rng = &mut XorShiftRng::from_seed(SEED);
         let r0 = rng.gen();
@@ -203,4 +234,55 @@ mod test {
         let r1 = rng.gen();
         assert_eq!(compute_op(r0, r1, false), r0 * r1);
     }
+
+    #[test]
+    fn test_add_to_party() {
+        let one = Fp::one();
+        assert_eq!(compute_add_to_party(one, one, 0), one + one);
+        assert_eq!(compute_add_to_party(one, one, 1), one);
+    }
+
+    #[test]
+    fn test_open() {
+        let prog = vec![
+            Instruction::OPEN(0, 0),
+            Instruction::OUTPUT(0),
+            Instruction::STOP,
+        ];
+        let one = Fp::one();
+        let mut reg= [None; REG_SIZE];
+        reg[0] = Some(one);
+
+        let (s, r) = bounded(5);
+        let (_, dummy_triple_chan) = bounded(5);
+        s.send(Fp::zero()).unwrap();
+        let result = vm_runner(prog, reg, r, dummy_triple_chan).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Fp::zero());
+    }
+
+    #[test]
+    fn test_triple() {
+        let prog = vec![
+            Instruction::TRIPLE(0, 1, 2),
+            Instruction::OUTPUT(0),
+            Instruction::OUTPUT(1),
+            Instruction::OUTPUT(2),
+            Instruction::STOP,
+        ];
+
+        let (s, r) = bounded(5);
+        let (_, dummy_open_chan) = bounded(5);
+        let zero = Fp::zero();
+        let one = Fp::one();
+        let two = one + one;
+        s.send((zero, one, two)).unwrap();
+        let result = vm_runner(prog, [None; REG_SIZE], dummy_open_chan, r).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], zero);
+        assert_eq!(result[1], one);
+        assert_eq!(result[2], two);
+    }
+
+    // TODO test for failures
 }
