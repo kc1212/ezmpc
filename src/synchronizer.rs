@@ -1,6 +1,7 @@
 use crate::error::SomeError;
 use crate::message::*;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
+use log::debug;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -18,14 +19,14 @@ impl Synchronizer {
         thread::spawn(move || {
             let s = Synchronizer { o_chans, i_chans };
             s.broadcast(SyncMsg::Start)?;
-            println!("start!");
+            debug!("Synchronizer is starting");
             s.listen()
         })
     }
 
     fn broadcast(&self, m: SyncMsg) -> Result<(), SendError<SyncMsg>> {
+        debug!("Synchronizer broadcasting {:?}", m);
         for c in &self.o_chans {
-            println!("sync sending {:?}", m);
             c.send(m)?;
         }
         Ok(())
@@ -34,9 +35,10 @@ impl Synchronizer {
     fn recv_all(&self) -> Result<Vec<SyncMsgReply>, RecvTimeoutError> {
         let mut out: Vec<SyncMsgReply> = Vec::new();
         for c in &self.i_chans {
-            let m = c.recv_timeout(Duration::from_millis(1000))?;
+            let m = c.recv_timeout(Duration::from_secs(1))?;
             out.push(m);
         }
+        debug!("Synchronizer received {:?}", out);
         Ok(out)
     }
 

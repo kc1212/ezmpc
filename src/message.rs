@@ -21,17 +21,3 @@ pub struct TripleMsg {
     c: Fp,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Inst {
-    CAdd,
-    CMul,
-    SAdd,
-    Triple,
-    Open,
-    CPush(Fp),
-    SPush(Fp),
-    COutput,
-    SOutput,
-}
-
-

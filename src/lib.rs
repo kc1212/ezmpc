@@ -10,9 +10,12 @@ extern crate ff;
 extern crate rand;
 #[macro_use]
 extern crate quick_error;
+extern crate log;
 
 #[cfg(test)]
 extern crate itertools;
+#[cfg(test)]
+extern crate test_env_log;
 
 #[cfg(test)]
 mod tests {
@@ -23,6 +26,8 @@ mod tests {
     use crate::synchronizer::Synchronizer;
     use crossbeam_channel::{bounded, Receiver, Sender};
     use ff::Field;
+    use crate::vm;
+    use test_env_log::test;
 
     fn create_chans(
         n: usize,
@@ -40,24 +45,26 @@ mod tests {
         let (sync_chans, machine_chans) = create_chans(1);
         let (_, triple_receiver) = bounded(5);
         let instructions = vec![
-            Inst::COutput,
-            Inst::CAdd,
-            Inst::CPush(Fp::one()),
-            Inst::CPush(Fp::one()),
+            vm::Instruction::ADD(2, 1, 0),
+            vm::Instruction::OUTPUT(2),
+            vm::Instruction::STOP,
         ];
 
+        let one = Fp::one();
+        let two = one + one;
         let sync_handle = Synchronizer::spawn(sync_chans.0, sync_chans.1);
         let machine_handle = Machine::spawn(
+            0,
             machine_chans.0[0].clone(),
             machine_chans.1[0].clone(),
             triple_receiver,
             instructions,
+            vm::vec_to_reg(&vec![one, one]),
         );
 
         let answer = machine_handle.join().unwrap().unwrap();
-        let two = Fp::one() + Fp::one();
-        assert!(answer.1.is_empty());
-        assert_eq!(answer.0[0], two);
+        assert_eq!(answer.len() , 1);
+        assert_eq!(answer[0], two);
         assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
 }

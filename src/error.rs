@@ -12,6 +12,9 @@ quick_error! {
         NoneError {
             display("none error")
         }
+        JoinError {
+            display("join error")
+        }
         RecvError(err: crossbeam_channel::RecvError) {
             from()
         }

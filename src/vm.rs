@@ -4,17 +4,34 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use std::time::Duration;
 use std::thread;
 use std::thread::JoinHandle;
+use std::cmp::min;
 
 type RegAddr= usize;
-type PartyID = usize;
+pub(crate) type PartyID = usize;
+
+pub(crate) type Reg = [Option<Fp>; REG_SIZE];
+
+pub(crate) fn empty_reg() -> Reg {
+    [None; REG_SIZE]
+}
+
+pub(crate) fn vec_to_reg(v: &Vec<Fp>) -> Reg {
+    let mut reg = [None; REG_SIZE];
+    let n = min(v.len(), REG_SIZE);
+    for i in 0..n {
+        reg[i] = Some(v[i]);
+    }
+    reg
+}
 
 const REG_SIZE: usize = 128;
 
-struct VM {
-    register: [Option<Fp>; REG_SIZE],
+pub(crate) struct VM {
+    register: Reg,
     id: PartyID,
 }
 
+// TODO might be a problem for error handling if we cannot derive Eq/PartialEq
 #[derive(Debug)]
 pub enum Action {
     None,
@@ -41,14 +58,14 @@ fn wrap_option<T>(v: Option<T>) -> Result<T, SomeError> {
 }
 
 impl VM {
-    pub fn spawn(id: PartyID, reg: [Option<Fp>; REG_SIZE], i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
+    pub fn spawn(id: PartyID, reg: Reg, i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
             let mut vm = VM::new(id, reg);
             vm.listen(i_chan, o_chan)
         })
     }
 
-    fn new(id: PartyID, reg: [Option<Fp>; REG_SIZE]) -> VM {
+    fn new(id: PartyID, reg: Reg) -> VM {
         VM {
             register: reg,
             id,
@@ -149,16 +166,14 @@ mod test {
     use rand::{Rng, SeedableRng, XorShiftRng};
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
     use ff::Field;
-    use crate::crypto::generate_triple;
-    use crate::message::Inst;
 
-    fn simple_vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE]) -> Result<Vec<Fp>, SomeError> {
+    fn simple_vm_runner(instructions: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_open_chan) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
         vm_runner(instructions, reg, dummy_open_chan, dummy_triple_chan)
     }
 
-    fn vm_runner(instructions: Vec<Instruction>, reg: [Option<Fp>; REG_SIZE], open_chan: Receiver<Fp>, triple_chan: Receiver<(Fp, Fp, Fp)>) -> Result<Vec<Fp>, SomeError> {
+    fn vm_runner(instructions: Vec<Instruction>, reg: Reg, open_chan: Receiver<Fp>, triple_chan: Receiver<(Fp, Fp, Fp)>) -> Result<Vec<Fp>, SomeError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
@@ -191,9 +206,7 @@ mod test {
             Instruction::OUTPUT(2),
             Instruction::STOP,
         ];
-        let mut reg= [None; REG_SIZE];
-        reg[0] = Some(a);
-        reg[1] = Some(b);
+        let reg = vec_to_reg(&vec![a, b]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
@@ -206,9 +219,7 @@ mod test {
             Instruction::STOP,
         ];
 
-        let mut reg= [None; REG_SIZE];
-        reg[0] = Some(a);
-        reg[1] = Some(b);
+        let reg = vec_to_reg(&vec![a, b]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
@@ -249,9 +260,7 @@ mod test {
             Instruction::OUTPUT(0),
             Instruction::STOP,
         ];
-        let one = Fp::one();
-        let mut reg= [None; REG_SIZE];
-        reg[0] = Some(one);
+        let reg = vec_to_reg(&vec![Fp::one()]);
 
         let (s, r) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
@@ -277,7 +286,7 @@ mod test {
         let one = Fp::one();
         let two = one + one;
         s.send((zero, one, two)).unwrap();
-        let result = vm_runner(prog, [None; REG_SIZE], dummy_open_chan, r).unwrap();
+        let result = vm_runner(prog, empty_reg(), dummy_open_chan, r).unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], zero);
         assert_eq!(result[1], one);
