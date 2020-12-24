@@ -4,20 +4,19 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 pub struct Synchronizer {
-    o_chans: Vec<Sender<SyncMsg>>,
-    i_chans: Vec<Receiver<SyncMsgReply>>,
+    s_chans: Vec<Sender<SyncMsg>>,
+    r_chans: Vec<Receiver<SyncMsgReply>>,
 }
 
 impl Synchronizer {
     pub fn spawn(
-        o_chans: Vec<Sender<SyncMsg>>,
-        i_chans: Vec<Receiver<SyncMsgReply>>,
+        s_chans: Vec<Sender<SyncMsg>>,
+        r_chans: Vec<Receiver<SyncMsgReply>>,
     ) -> JoinHandle<Result<(), SomeError>> {
         thread::spawn(move || {
-            let s = Synchronizer { o_chans, i_chans };
+            let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
             debug!("Synchronizer is starting");
             s.listen()
@@ -25,21 +24,11 @@ impl Synchronizer {
     }
 
     fn broadcast(&self, m: SyncMsg) -> Result<(), SendError<SyncMsg>> {
-        debug!("Synchronizer broadcasting {:?}", m);
-        for c in &self.o_chans {
-            c.send(m)?;
-        }
-        Ok(())
+        broadcast(&self.s_chans, m)
     }
 
     fn recv_all(&self) -> Result<Vec<SyncMsgReply>, RecvTimeoutError> {
-        let mut out: Vec<SyncMsgReply> = Vec::new();
-        for c in &self.i_chans {
-            let m = c.recv_timeout(Duration::from_secs(1))?;
-            out.push(m);
-        }
-        debug!("Synchronizer received {:?}", out);
-        Ok(out)
+        recv_all(&self.r_chans)
     }
 
     fn listen(&self) -> Result<(), SomeError> {
@@ -58,5 +47,35 @@ impl Synchronizer {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::message::{SyncMsg, SyncMsgReply};
+
+    use super::Synchronizer;
+    use crossbeam_channel::bounded;
+    use std::time::Duration;
+
+    #[test]
+    fn test_synchronizer() {
+        let (s_msg, r_msg) = bounded(5);
+        let (s_reply, r_reply) = bounded(5);
+        let handler = Synchronizer::spawn(vec![s_msg], vec![r_reply]);
+        
+        // we expect to hear a Start followed by a Next
+        assert_eq!(SyncMsg::Start, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
+        
+        // then we expect Next again after sending Ok
+        s_reply.send(SyncMsgReply::Ok).unwrap();
+        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
+        
+        // finally, sending Abort will respond with Abort
+        s_reply.send(SyncMsgReply::Abort).unwrap();
+        assert_eq!(SyncMsg::Abort, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
+
+        assert_eq!((), handler.join().unwrap().unwrap());
     }
 }

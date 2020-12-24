@@ -7,15 +7,15 @@ use std::thread::JoinHandle;
 use std::cmp::min;
 
 type RegAddr= usize;
-pub(crate) type PartyID = usize;
+pub type PartyID = usize;
 
-pub(crate) type Reg = [Option<Fp>; REG_SIZE];
+pub type Reg = [Option<Fp>; REG_SIZE];
 
-pub(crate) fn empty_reg() -> Reg {
+pub fn empty_reg() -> Reg {
     [None; REG_SIZE]
 }
 
-pub(crate) fn vec_to_reg(v: &Vec<Fp>) -> Reg {
+pub fn vec_to_reg(v: &Vec<Fp>) -> Reg {
     let mut reg = [None; REG_SIZE];
     let n = min(v.len(), REG_SIZE);
     for i in 0..n {
@@ -26,7 +26,7 @@ pub(crate) fn vec_to_reg(v: &Vec<Fp>) -> Reg {
 
 const REG_SIZE: usize = 128;
 
-pub(crate) struct VM {
+pub struct VM {
     register: Reg,
     id: PartyID,
 }
