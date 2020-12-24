@@ -3,7 +3,7 @@ use log::debug;
 use std::fmt::Debug;
 use std::time::Duration;
 
-pub fn broadcast<T: Copy + Clone + Debug>(
+pub(crate) fn broadcast<T: Copy + Clone + Debug>(
     s_chans: &Vec<Sender<T>>,
     m: T,
 ) -> Result<(), SendError<T>> {
@@ -14,7 +14,7 @@ pub fn broadcast<T: Copy + Clone + Debug>(
     Ok(())
 }
 
-pub fn recv_all<T: Copy + Clone + Debug>(
+pub(crate) fn recv_all<T: Copy + Clone + Debug>(
     r_chans: &Vec<Receiver<T>>,
 ) -> Result<Vec<T>, RecvTimeoutError> {
     let mut out: Vec<T> = Vec::new();

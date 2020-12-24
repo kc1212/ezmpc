@@ -1,9 +1,9 @@
-mod crypto;
-mod error;
-mod message;
-mod node;
-mod synchronizer;
-mod vm;
+pub mod crypto;
+pub mod error;
+pub mod message;
+pub mod node;
+pub mod synchronizer;
+pub mod vm;
 
 extern crate crossbeam_channel;
 extern crate ff;
@@ -167,7 +167,7 @@ mod tests {
             .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))
             .count();
         let triple_chans = create_triple_chans(n, triple_count);
-        for _ in (0..triple_count) {
+        for _ in 0..triple_count {
             let triple = generate_triple(n, rng);
             for (i, (s, _)) in triple_chans.iter().enumerate() {
                 s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();

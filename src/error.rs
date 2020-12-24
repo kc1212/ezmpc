@@ -26,8 +26,9 @@ quick_error! {
             display("evaluation error: {}", err)
             from()
         }
-        JoinError {
-            display("join error")
+        JoinError(err: Box<dyn std::any::Any + Send>) {
+            display("join error: {:?}", err)
+            from()
         }
         RecvError(err: crossbeam_channel::RecvError) {
             display("receive error: {}", err)

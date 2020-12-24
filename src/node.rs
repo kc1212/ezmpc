@@ -2,7 +2,7 @@ use crate::crypto::Fp;
 use crate::error::SomeError;
 use crate::message::*;
 use crate::vm;
-use crossbeam_channel::{select, Receiver, Sender, bounded};
+use crossbeam_channel::{bounded, select, Receiver, Sender};
 use ff::Field;
 use log::debug;
 use std::thread;
@@ -57,7 +57,7 @@ impl Node {
         // start the vm
         let (s_inst_chan, r_inst_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
-        let vm_handler = vm::VM::spawn(id, reg, r_inst_chan, s_action_chan);
+        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, reg, r_inst_chan, s_action_chan);
         let mut instruction_counter = 0;
         let mut triples = Vec::new();
 
@@ -117,10 +117,6 @@ impl Node {
             }
         }
 
-        match vm_handler.join() {
-            Ok(x) => x,
-            Err(e) => Err(SomeError::JoinError),
-        }
+        vm_handler.join()?
     }
 }
-
