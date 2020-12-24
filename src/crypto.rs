@@ -105,7 +105,7 @@ mod tests {
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
     #[test]
-    fn test_rand() {
+    fn test_fp_rand() {
         let rng = &mut XorShiftRng::from_seed(SEED);
         let a: Fp = rng.gen();
         let b: Fp = rng.gen();

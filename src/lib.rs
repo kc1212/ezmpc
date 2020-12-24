@@ -22,15 +22,16 @@ mod tests {
 
     use std::thread::JoinHandle;
 
-    use crate::crypto::{combine, share, Fp};
+    use crate::crypto::{combine, generate_triple, share, Fp};
     use crate::message::*;
     use crate::node::Node;
     use crate::synchronizer::Synchronizer;
     use crate::vm;
     use crossbeam_channel::{bounded, Receiver, Sender};
     use ff::Field;
-    use rand::{SeedableRng, XorShiftRng};
+    use rand::{Rng, SeedableRng, XorShiftRng};
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
+    use crate::vm::vec_to_reg;
     use test_env_log::test;
 
     fn create_sync_chans(
@@ -54,6 +55,13 @@ mod tests {
             output.push(row);
         }
         output
+    }
+
+    fn create_triple_chans(
+        n: usize,
+        capacity: usize,
+    ) -> Vec<(Sender<(Fp, Fp, Fp)>, Receiver<(Fp, Fp, Fp)>)> {
+        (0..n).map(|_| bounded(capacity)).collect()
     }
 
     fn get_row<T: Clone>(matrix: &Vec<Vec<T>>, row: usize) -> Vec<T> {
@@ -136,21 +144,35 @@ mod tests {
         assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
 
-    #[test]
-    fn integration_test_open() {
-        let n = 2;
+    fn transpose<T: Clone>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
+        assert!(!v.is_empty());
+        (0..v[0].len())
+            .map(|i| v.iter().map(|inner| inner[i].clone()).collect::<Vec<T>>())
+            .collect()
+    }
+
+    fn generic_integration_test(
+        n: usize,
+        prog: Vec<vm::Instruction>,
+        regs: Vec<vm::Reg>,
+        expected: Vec<Fp>,
+        rng: &mut impl Rng,
+    ) {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(n);
         let node_chans = create_node_chans(n);
-        let (_triple_sender, triple_receiver) = bounded(5);
-        let prog = vec![
-            vm::Instruction::OPEN(0, 0),
-            vm::Instruction::OUTPUT(0),
-            vm::Instruction::STOP,
-        ];
 
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let zero = Fp::zero();
-        let zero_boxes = share(&zero, n, rng);
+        // check for the number of triples in prog and generate enough triples for it
+        let triple_count = prog
+            .iter()
+            .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))
+            .count();
+        let triple_chans = create_triple_chans(n, triple_count);
+        for _ in (0..triple_count) {
+            let triple = generate_triple(n, rng);
+            for (i, (s, _)) in triple_chans.iter().enumerate() {
+                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
+            }
+        }
 
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handles: Vec<JoinHandle<_>> = (0..n)
@@ -159,7 +181,7 @@ mod tests {
                     i,
                     sync_chans_for_node.0[i].clone(),
                     sync_chans_for_node.1[i].clone(),
-                    triple_receiver.clone(),
+                    triple_chans[i].1.clone(),
                     get_row(&node_chans, i)
                         .iter()
                         .map(|(s, _)| s.clone())
@@ -169,17 +191,75 @@ mod tests {
                         .map(|(_, r)| r.clone())
                         .collect(),
                     prog.clone(),
-                    vm::vec_to_reg(&vec![zero_boxes[i]]),
+                    regs[i],
                 );
                 node_handle
             })
             .collect();
 
-        let mut output = Vec::new();
+        let mut output_shares = Vec::new();
         for h in node_handles {
-            output.push(h.join().unwrap().unwrap()[0]);
+            output_shares.push(h.join().unwrap().unwrap());
         }
-        assert_eq!(zero, combine(&output));
+        assert_eq!(
+            expected,
+            transpose(output_shares)
+                .iter()
+                .map(|shares| combine(shares))
+                .collect::<Vec<Fp>>()
+        );
         assert_eq!((), sync_handle.join().unwrap().unwrap());
+    }
+
+    #[test]
+    fn integration_test_open() {
+        let n = 3;
+        let prog = vec![
+            vm::Instruction::OPEN(0, 0),
+            vm::Instruction::OUTPUT(0),
+            vm::Instruction::STOP,
+        ];
+
+        let rng = &mut XorShiftRng::from_seed(SEED);
+        let zero = Fp::zero();
+        let regs: Vec<vm::Reg> = transpose(vec![share(&zero, n, rng)])
+            .iter()
+            .map(|v| vec_to_reg(v))
+            .collect();
+
+        generic_integration_test(n, prog, regs, vec![zero], rng);
+    }
+
+    #[test]
+    fn integration_test_mul() {
+        // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
+        let n = 3;
+        let prog = vec![
+            vm::Instruction::TRIPLE(2, 3, 4),    // [a], [b], [c]
+            vm::Instruction::SUB(5, 0, 2),       // [e] <- [x] - [a]
+            vm::Instruction::SUB(6, 1, 3),       // [d] <- [y] - [b]
+            vm::Instruction::OPEN(5, 5),         // e <- open [e]
+            vm::Instruction::OPEN(6, 6),         // d <- open [d]
+            vm::Instruction::MUL(7, 5, 3),       // e * [b]
+            vm::Instruction::MUL(8, 6, 2),       // d * [a]
+            vm::Instruction::MUL(9, 5, 6),       // e*d
+            vm::Instruction::ADD(10, 4, 7),      // [c] + [e*b]
+            vm::Instruction::ADD(10, 10, 8),     //     + [d*a]
+            vm::Instruction::ADDP(10, 10, 9, 0), //     + e*d
+            vm::Instruction::OUTPUT(10),
+            vm::Instruction::STOP,
+        ];
+
+        let rng = &mut XorShiftRng::from_seed(SEED);
+        let x: Fp = rng.gen();
+        let y: Fp = rng.gen();
+        let expected = x * y;
+
+        let regs: Vec<vm::Reg> = transpose(vec![share(&x, n, rng), share(&y, n, rng)])
+            .iter()
+            .map(|v| vec_to_reg(v))
+            .collect();
+
+        generic_integration_test(n, prog, regs, vec![expected], rng);
     }
 }
