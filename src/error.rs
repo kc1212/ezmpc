@@ -1,42 +1,64 @@
 use crate::crypto::Fp;
-use crate::message::{SyncMsg, SyncMsgReply};
+use crate::message;
 use crate::vm;
 use crossbeam_channel;
+use std::fmt;
+
+#[derive(Debug)]
+pub enum EvalError {
+    OpenEmptyReg,
+    OutputEmptyReg,
+    OpEmptyReg,
+}
+
+impl fmt::Display for EvalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "evaluation failed with error {:?}", self)
+    }
+}
+
+impl std::error::Error for EvalError {}
 
 quick_error! {
     #[derive(Debug)]
     pub enum SomeError {
-        EvalError {
-            display("evaluation error")
-        }
-        NoneError {
-            display("none error")
+        EvalError(err: EvalError) {
+            display("evaluation error: {}", err)
+            from()
         }
         JoinError {
             display("join error")
         }
         RecvError(err: crossbeam_channel::RecvError) {
+            display("receive error: {}", err)
             from()
         }
         RecvTimeoutError(err: crossbeam_channel::RecvTimeoutError) {
+            display("receive timeout error: {}", err)
             from()
         }
-        SendError(err: crossbeam_channel::SendError<SyncMsg>) {
+        SendErrorSyncMsg(err: crossbeam_channel::SendError<message::SyncMsg>) {
+            display("send SyncMsgs error: {}", err)
             from()
         }
-        SendErrorReply(err: crossbeam_channel::SendError<SyncMsgReply>) {
+        SendErrorSyncMsgReply(err: crossbeam_channel::SendError<message::SyncMsgReply>) {
+            display("send SyncMsgReply error: {}", err)
             from()
         }
         SendErrorAction(err: crossbeam_channel::SendError<vm::Action>) {
+            display("send Action error: {}", err)
             from()
         }
         SendErrorInstruction(err: crossbeam_channel::SendError<vm::Instruction>) {
+            display("send Instruction error: {}", err)
             from()
         }
         SendErrorTriple(err: crossbeam_channel::SendError<(Fp, Fp, Fp)>) {
+            display("send Triple error: {}", err)
             from()
         }
         SendErrorFp(err: crossbeam_channel::SendError<Fp>) {
+            display("send Fp error: {}", err)
             from()
         }
     }

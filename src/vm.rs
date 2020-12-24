@@ -1,4 +1,4 @@
-use crate::crypto::Fp;
+use crate::{crypto::Fp, error::EvalError};
 use crate::error::SomeError;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::time::Duration;
@@ -50,10 +50,10 @@ pub enum Instruction {
     STOP,
 }
 
-fn wrap_option<T>(v: Option<T>) -> Result<T, SomeError> {
+fn wrap_option<T>(v: Option<T>, err: EvalError) -> Result<T, SomeError> {
     match v {
         Some(x) => Ok(x),
-        None => Err(SomeError::NoneError),
+        None => Err(err.into()),
     }
 }
 
@@ -92,7 +92,9 @@ impl VM {
                 Instruction::OPEN(to, from) =>
                     self.process_open(to, from, &o_chan)?,
                 Instruction::OUTPUT(reg) => {
-                    output.push(wrap_option(self.register[reg])?);
+                    output.push(wrap_option(
+                        self.register[reg], 
+                        EvalError::OutputEmptyReg)?);
                     o_chan.send(Action::None)?
                 }
                 Instruction::STOP =>
@@ -108,7 +110,7 @@ impl VM {
             .zip(self.register[r2]).map(|(a, b)| op(&a, &b));
         match c {
             None => {
-                Err(SomeError::EvalError)
+                Err(EvalError::OpEmptyReg.into())
             }
             Some(x) => {
                 self.register[r0] = Some(x);
@@ -144,7 +146,7 @@ impl VM {
     fn process_open(&mut self, to: RegAddr, from: RegAddr, o_chan: &Sender<Action>) -> Result<(), SomeError> {
         match self.register[from] {
             None => {
-                Err(SomeError::EvalError)
+                Err(EvalError::OpenEmptyReg.into())
             }
             Some(for_opening) => {
                 let (s, r) = bounded(1);
