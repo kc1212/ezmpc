@@ -92,8 +92,9 @@ pub fn generate_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<F
     (share(&a, n, rng), share(&b, n, rng), share(&c, n, rng))
 }
 
-pub fn random_sharing(n: usize, rng: &mut impl Rng) -> Vec<Fp> {
-    share(&rng.gen(), n, rng)
+pub fn random_sharing(n: usize, rng: &mut impl Rng) -> (Fp, Vec<Fp>) {
+    let r = rng.gen();
+    (r, share(&r, n, rng))
 }
 
 #[cfg(test)]

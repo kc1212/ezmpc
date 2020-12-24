@@ -161,7 +161,7 @@ impl VM {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use rand::{Rng, SeedableRng, XorShiftRng};
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];

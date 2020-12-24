@@ -51,7 +51,7 @@ impl Synchronizer {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::message::{SyncMsg, SyncMsgReply};
 
     use super::Synchronizer;
