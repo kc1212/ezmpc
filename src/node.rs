@@ -47,7 +47,7 @@ impl Node {
         loop {
             let msg = self.r_sync_chan.recv()?;
             if msg == SyncMsg::Start {
-                debug!("Machine is starting");
+                debug!("Starting");
                 break;
             } else {
                 debug!("Received {:?} while waiting to start", msg);
@@ -73,14 +73,14 @@ impl Node {
                 recv(self.r_sync_chan) -> v => {
                     let msg: SyncMsg = v?;
                     match msg {
-                        SyncMsg::Start => panic!("already started"),
+                        SyncMsg::Start => panic!("node already started"),
                         SyncMsg::Next => {
                             if instruction_counter >= self.instructions.len() {
                                 panic!("instruction counter overflow");
                             }
                             let inst = self.instructions[instruction_counter];
                             instruction_counter += 1;
-                            debug!("Sending inst {:?} to vm", inst);
+                            debug!("Sending instruction {:?} to VM", inst);
                             s_inst_chan.send(inst)?;
 
                             if inst == vm::Instruction::STOP {
@@ -88,7 +88,7 @@ impl Node {
                                 break;
                             } else {
                                 let action = r_action_chan.recv_timeout(Duration::from_secs(1))?;
-                                debug!("Received action {:?} from vm", action);
+                                debug!("Received action {:?} from VM", action);
                                 match action {
                                     vm::Action::None => (),
                                     vm::Action::Open(x, sender) => {

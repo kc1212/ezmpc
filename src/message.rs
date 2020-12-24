@@ -1,19 +1,24 @@
-use crossbeam_channel::{Sender, Receiver, SendError, RecvTimeoutError};
-use std::time::Duration;
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::fmt::Debug;
+use std::time::Duration;
 
-pub fn broadcast<T: Copy + Clone + Debug>(o_chans: &Vec<Sender<T>>, m: T) -> Result<(), SendError<T>> {
+pub fn broadcast<T: Copy + Clone + Debug>(
+    s_chans: &Vec<Sender<T>>,
+    m: T,
+) -> Result<(), SendError<T>> {
     debug!("Broadcasting {:?}", m);
-    for c in o_chans {
+    for c in s_chans {
         c.send(m)?;
     }
     Ok(())
 }
 
-pub fn recv_all<T: Copy + Clone + Debug>(i_chans: &Vec<Receiver<T>>) -> Result<Vec<T>, RecvTimeoutError> {
+pub fn recv_all<T: Copy + Clone + Debug>(
+    r_chans: &Vec<Receiver<T>>,
+) -> Result<Vec<T>, RecvTimeoutError> {
     let mut out: Vec<T> = Vec::new();
-    for c in i_chans {
+    for c in r_chans {
         let m = c.recv_timeout(Duration::from_secs(1))?;
         out.push(m);
     }
@@ -34,4 +39,3 @@ pub enum SyncMsgReply {
     Done,
     Abort,
 }
-

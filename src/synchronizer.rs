@@ -18,7 +18,7 @@ impl Synchronizer {
         thread::spawn(move || {
             let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
-            debug!("Synchronizer is starting");
+            debug!("Starting");
             s.listen()
         })
     }
@@ -36,6 +36,7 @@ impl Synchronizer {
         loop {
             let msgs = self.recv_all()?;
             if msgs.iter().all(|x| *x == SyncMsgReply::Done) {
+                debug!("All done");
                 break;
             } else if msgs.contains(&SyncMsgReply::Abort) {
                 self.broadcast(SyncMsg::Abort)?;
@@ -43,7 +44,7 @@ impl Synchronizer {
             } else if msgs.iter().all(|x| *x == SyncMsgReply::Ok) {
                 self.broadcast(SyncMsg::Next)?;
             } else {
-                panic!("unexpected condition");
+                panic!("unexpected messages {:?}", msgs);
             }
         }
         Ok(())
@@ -63,18 +64,30 @@ mod tests {
         let (s_msg, r_msg) = bounded(5);
         let (s_reply, r_reply) = bounded(5);
         let handler = Synchronizer::spawn(vec![s_msg], vec![r_reply]);
-        
+
         // we expect to hear a Start followed by a Next
-        assert_eq!(SyncMsg::Start, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
-        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
-        
+        assert_eq!(
+            SyncMsg::Start,
+            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
+        );
+        assert_eq!(
+            SyncMsg::Next,
+            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
+        );
+
         // then we expect Next again after sending Ok
         s_reply.send(SyncMsgReply::Ok).unwrap();
-        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
-        
+        assert_eq!(
+            SyncMsg::Next,
+            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
+        );
+
         // finally, sending Abort will respond with Abort
         s_reply.send(SyncMsgReply::Abort).unwrap();
-        assert_eq!(SyncMsg::Abort, r_msg.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert_eq!(
+            SyncMsg::Abort,
+            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
+        );
 
         assert_eq!((), handler.join().unwrap().unwrap());
     }
