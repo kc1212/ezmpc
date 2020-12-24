@@ -2,8 +2,10 @@ use ff::*;
 use rand::Rng;
 use std::ops::{Add, Mul, Sub};
 
+// sage: p = previous_prime(2^80)
+// sage: GF(p).primitive_element()
 #[derive(PrimeField)]
-#[PrimeFieldModulus = "52435875175126190479447740508185965837690552500527637822603658699938581184513"]
+#[PrimeFieldModulus = "1208925819614629174706111"]
 #[PrimeFieldGenerator = "7"]
 pub struct Fp(FpRepr);
 
