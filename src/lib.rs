@@ -172,16 +172,10 @@ mod tests {
             .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))
             .count();
         let triple_chans = create_triple_chans(n, triple_count);
-        for _ in 0..triple_count {
-            let triple = unauth_triple(n, rng);
-            for (i, (s, _)) in triple_chans.iter().enumerate() {
-                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
-            }
-        }
 
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handles: Vec<JoinHandle<_>> = (0..n)
-            .map(move |i| {
+            .map(|i| {
                 let node_handle = Node::spawn(
                     i,
                     sync_chans_for_node.0[i].clone(),
@@ -201,6 +195,13 @@ mod tests {
                 node_handle
             })
             .collect();
+
+        for _ in 0..triple_count {
+            let triple = unauth_triple(n, rng);
+            for (i, (s, _)) in triple_chans.iter().enumerate() {
+                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
+            }
+        }
 
         let mut output_shares = Vec::new();
         for h in node_handles {
