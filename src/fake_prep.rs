@@ -1,3 +1,4 @@
+use crate::algebra::Fp;
 use crate::crypto::*;
 use crate::vm::PartyID;
 use rand::Rng;

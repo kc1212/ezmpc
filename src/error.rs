@@ -1,4 +1,4 @@
-use crate::crypto::Fp;
+use crate::algebra::Fp;
 use crate::message;
 use crate::vm;
 use crossbeam_channel;

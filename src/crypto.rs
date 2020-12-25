@@ -1,68 +1,7 @@
-use ff::*;
+use crate::algebra::Fp;
+use num_traits::Zero;
 use rand::Rng;
-use std::ops::{Add, Mul, Sub};
-
-// sage: p = previous_prime(2^80)
-// sage: GF(p).primitive_element()
-#[derive(PrimeField)]
-#[PrimeFieldModulus = "1208925819614629174706111"]
-#[PrimeFieldGenerator = "7"]
-pub struct Fp(FpRepr);
-
-impl Add for Fp {
-    type Output = Fp;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut v = self;
-        v.add_assign(&rhs);
-        v
-    }
-}
-
-impl Add for &Fp {
-    type Output = Fp;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut v = self.clone();
-        v.add_assign(&rhs);
-        v
-    }
-}
-
-impl Sub for Fp {
-    type Output = Fp;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut v = self;
-        v.sub_assign(&rhs);
-        v
-    }
-}
-
-impl Sub for &Fp {
-    type Output = Fp;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut v = self.clone();
-        v.sub_assign(&rhs);
-        v
-    }
-}
-
-impl Mul for Fp {
-    type Output = Fp;
-    fn mul(self, rhs: Self) -> Self::Output {
-        let mut v = self;
-        v.mul_assign(&rhs);
-        v
-    }
-}
-
-impl Mul for &Fp {
-    type Output = Fp;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        let mut v = self.clone();
-        v.mul_assign(&rhs);
-        v
-    }
-}
+use std::ops::{Add, Sub};
 
 #[derive(Copy, Clone, Debug)]
 pub struct AuthShare {
@@ -71,27 +10,19 @@ pub struct AuthShare {
 }
 
 impl AuthShare {
-    fn mul_const_assign(&mut self, rhs: &Fp) {
-        self.share.mul_assign(rhs);
-        self.mac.mul_assign(rhs);
-    }
-
-    fn mul_const(&self, rhs: &Fp) -> Self {
-        let mut out = self.clone();
-        out.mul_const_assign(rhs);
-        out
-    }
-
-    fn add_const_assign(&mut self, rhs: &Fp, alpha_share: &Fp, update_share: bool) {
-        if update_share {
-            self.share.add_assign(rhs);
+    pub fn mul_const(&self, rhs: &Fp) -> Self {
+        Self {
+            share: self.share * *rhs,
+            mac: self.mac * *rhs,
         }
-        self.mac.add_assign(&(alpha_share * rhs));
     }
 
-    fn add_const(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
+    pub fn add_const(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
         let mut out = self.clone();
-        out.add_const_assign(rhs, alpha_share, update_share);
+        if update_share {
+            out.share += *rhs;
+        }
+        out.mac += *alpha_share * *rhs;
         out
     }
 }
@@ -147,12 +78,11 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     let mut sum = Fp::zero();
     for i in 0..(n - 1) {
         let r: Fp = rng.gen();
-        sum.add_assign(&r); // sum += r
+        sum += r;
         out[i] = r;
     }
 
-    let mut final_share = secret.clone();
-    final_share.sub_assign(&sum);
+    let final_share = *secret - sum;
     out[n - 1] = final_share;
     out
 }
@@ -160,7 +90,7 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
 pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
     let mut out = Fp::zero();
     for share in shares {
-        out.add_assign(share);
+        out += *share;
     }
     out
 }
@@ -177,7 +107,7 @@ pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>
 }
 
 pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<AuthShare> {
-    let mac_on_secret = secret * alpha;
+    let mac_on_secret = *secret * *alpha;
     let reg_shares = unauth_share(&secret, n, rng);
     let mac_shares = unauth_share(&mac_on_secret, n, rng);
 
@@ -207,7 +137,9 @@ pub fn auth_triple(
 mod tests {
     use super::*;
     use itertools::izip;
+    use num_traits::{One, Zero};
     use rand::{Rng, SeedableRng, XorShiftRng};
+
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
     #[test]
@@ -231,17 +163,17 @@ mod tests {
         let secret2: Fp = rng.gen();
         let shares2 = unauth_share(&secret2, n, rng);
 
-        let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| x + y).collect();
+        let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| *x + *y).collect();
         assert_eq!(secret + secret2, unauth_combine(&new_shares));
 
         let const_term: Fp = rng.gen();
         assert_eq!(
             secret * const_term,
-            unauth_combine(&shares.iter().map(|s| s * &const_term).collect())
+            unauth_combine(&shares.iter().map(|s| *s * const_term).collect())
         );
         assert_eq!(
             secret2 * const_term,
-            unauth_combine(&shares2.iter().map(|s| s * &const_term).collect())
+            unauth_combine(&shares2.iter().map(|s| *s * const_term).collect())
         );
     }
 
@@ -257,21 +189,29 @@ mod tests {
         assert_eq!(unauth_combine(&x_boxes), x);
         assert_eq!(unauth_combine(&y_boxes), y);
 
-        let e_boxes: Vec<Fp> = x_boxes.iter().zip(&a_boxes).map(|(x, a)| x - a).collect();
-        let d_boxes: Vec<Fp> = y_boxes.iter().zip(&b_boxes).map(|(y, b)| y - b).collect();
+        let e_boxes: Vec<Fp> = x_boxes
+            .into_iter()
+            .zip(&a_boxes)
+            .map(|(x, a)| x - *a)
+            .collect();
+        let d_boxes: Vec<Fp> = y_boxes
+            .into_iter()
+            .zip(&b_boxes)
+            .map(|(y, b)| y - *b)
+            .collect();
 
         let e = unauth_combine(&e_boxes);
         let d = unauth_combine(&d_boxes);
         assert_eq!(e, x - unauth_combine(&a_boxes));
         assert_eq!(d, y - unauth_combine(&b_boxes));
 
-        let ed = &e * &d;
+        let ed = e * d;
 
-        let z_boxes = izip!(&c_boxes, &b_boxes, &a_boxes)
+        let z_boxes = izip!(c_boxes, b_boxes, a_boxes)
             .map(|(c_box, b_box, a_box)| {
-                let mut v = c_box.clone();
-                v.add_assign(&(&e * b_box));
-                v.add_assign(&(&d * a_box));
+                let mut v = c_box;
+                v += e * b_box;
+                v += d * a_box;
                 v
             })
             .collect();
@@ -303,7 +243,7 @@ mod tests {
         let ds: Vec<_> = alpha_shares
             .into_iter()
             .zip(shares)
-            .map(|(a, share)| a * &x - share.mac)
+            .map(|(a, share)| *a * x - share.mac)
             .collect();
         let d = unauth_combine(&ds);
         (Fp::zero() == d, x)
@@ -365,7 +305,7 @@ mod tests {
 
         // test failure: bad MAC
         let mut bad_shares = shares.clone();
-        bad_shares[0].mac.add_assign(&Fp::one());
+        bad_shares[0].mac += Fp::one();
         let bad_result = auth_combine_no_assert(&bad_shares, &unauth_share(&alpha, n, rng));
         assert_eq!((false, secret), bad_result);
     }
@@ -391,7 +331,7 @@ mod tests {
         assert_eq!(e, x - auth_combine(&a_boxes, &alpha_shares));
         assert_eq!(d, y - auth_combine(&b_boxes, &alpha_shares));
 
-        let ed = &e * &d;
+        let ed = e * d;
 
         let z_boxes: Vec<_> = izip!(0..n, &alpha_shares, &c_boxes, &b_boxes, &a_boxes)
             .map(|(i, alpha_share, c_box, b_box, a_box)| {

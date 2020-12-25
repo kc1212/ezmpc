@@ -8,14 +8,12 @@ pub mod synchronizer;
 pub mod vm;
 
 extern crate crossbeam_channel;
-extern crate ff;
 extern crate log;
 extern crate quick_error;
 extern crate rand;
 
 extern crate alga;
 extern crate alga_derive;
-extern crate num_integer;
 extern crate num_traits;
 
 #[cfg(test)]
@@ -25,20 +23,21 @@ extern crate test_env_log;
 
 #[cfg(test)]
 mod tests {
-
+    use crossbeam_channel::{bounded, Receiver, Sender};
+    use num_traits::{One, Zero};
+    use rand::{Rng, SeedableRng, XorShiftRng};
     use std::thread::JoinHandle;
+    use test_env_log::test;
 
-    use crate::crypto::{unauth_combine, unauth_share, unauth_triple, Fp};
+    use crate::algebra::Fp;
+    use crate::crypto::{unauth_combine, unauth_share, unauth_triple};
     use crate::message::*;
     use crate::node::Node;
     use crate::synchronizer::Synchronizer;
     use crate::vm;
-    use crossbeam_channel::{bounded, Receiver, Sender};
-    use ff::Field;
-    use rand::{Rng, SeedableRng, XorShiftRng};
-    const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
     use crate::vm::vec_to_reg;
-    use test_env_log::test;
+
+    const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
     fn create_sync_chans(
         n: usize,

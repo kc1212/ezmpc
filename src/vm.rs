@@ -1,5 +1,6 @@
-use crate::error::SomeError;
-use crate::{crypto::Fp, error::EvalError};
+use crate::algebra::Fp;
+use crate::error::{EvalError, SomeError};
+
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::min;
 use std::thread;
@@ -81,9 +82,9 @@ impl VM {
         i_chan: Receiver<Instruction>,
         o_chan: Sender<Action>,
     ) -> Result<Vec<Fp>, SomeError> {
-        let addop = |x: &Fp, y: &Fp| x + y;
-        let subop = |x: &Fp, y: &Fp| x - y;
-        let mulop = |x: &Fp, y: &Fp| x * y;
+        let addop = |x: Fp, y: Fp| x + y;
+        let subop = |x: Fp, y: Fp| x - y;
+        let mulop = |x: Fp, y: Fp| x * y;
         let mut output = Vec::new();
 
         loop {
@@ -114,11 +115,11 @@ impl VM {
         op: F,
     ) -> Result<Action, SomeError>
     where
-        F: Fn(&Fp, &Fp) -> Fp,
+        F: Fn(Fp, Fp) -> Fp,
     {
         let c = self.register[r1]
             .zip(self.register[r2])
-            .map(|(a, b)| op(&a, &b));
+            .map(|(a, b)| op(a, b));
         match c {
             None => Err(EvalError::OpEmptyReg.into()),
             Some(x) => {
@@ -137,7 +138,7 @@ impl VM {
         id: PartyID,
     ) -> Result<Action, SomeError>
     where
-        F: Fn(&Fp, &Fp) -> Fp,
+        F: Fn(Fp, Fp) -> Fp,
     {
         if self.id == id {
             self.do_op(r0, r1, r2, op)
@@ -191,9 +192,10 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::{One, Zero};
     use rand::{Rng, SeedableRng, XorShiftRng};
+
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
-    use ff::Field;
 
     fn simple_vm_runner(instructions: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_open_chan) = bounded(5);

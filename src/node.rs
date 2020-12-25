@@ -1,10 +1,11 @@
-use crate::crypto::Fp;
+use crate::algebra::Fp;
 use crate::error::SomeError;
 use crate::message::*;
 use crate::vm;
+
 use crossbeam_channel::{bounded, select, Receiver, Sender};
-use ff::Field;
 use log::debug;
+use num_traits::Zero;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -96,7 +97,7 @@ impl Node {
                                         let replies = recv_all(&self.r_node_chan)?;
                                         let mut result = Fp::zero();
                                         for reply in replies {
-                                            result.add_assign(&reply);
+                                            result += reply;
                                         }
                                         sender.send(result)?
                                     }

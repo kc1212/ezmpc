@@ -1,65 +1,65 @@
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
-use num_integer::{ExtendedGcd, Integer};
 use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
+use rand::{Rand, Rng};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-const P: u128 = 7;
+const P: u128 = 18446744073709551557;
 
 #[derive(Alga, Copy, Clone, PartialEq, Eq, Debug)]
 #[alga_traits(Field(Additive, Multiplicative))]
 #[alga_quickcheck]
-struct W(u128); // we can only hold 64-bit values
+pub struct Fp(u128); // we can only hold 64-bit values
 
-impl AbsDiffEq for W {
-    type Epsilon = W;
-    fn default_epsilon() -> W {
-        W(0)
+impl AbsDiffEq for Fp {
+    type Epsilon = Fp;
+    fn default_epsilon() -> Fp {
+        Fp(0)
     }
-    fn abs_diff_eq(&self, other: &W, _epsilon: W) -> bool {
+    fn abs_diff_eq(&self, other: &Fp, _epsilon: Fp) -> bool {
         self == other
     }
 }
 
-impl RelativeEq for W {
-    fn default_max_relative() -> W {
-        W(0)
+impl RelativeEq for Fp {
+    fn default_max_relative() -> Fp {
+        Fp(0)
     }
 
-    fn relative_eq(&self, other: &Self, _epsilon: W, _max_relative: W) -> bool {
+    fn relative_eq(&self, other: &Self, _epsilon: Fp, _max_relative: Fp) -> bool {
         self == other
     }
 }
 
-impl Arbitrary for W {
+impl Arbitrary for Fp {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        W(u128::arbitrary(g) % P)
+        Fp(u128::arbitrary(g) % P)
     }
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(self.0.shrink().map(W))
+        Box::new(self.0.shrink().map(Fp))
     }
 }
 
-impl AbstractMagma<Additive> for W {
+impl AbstractMagma<Additive> for Fp {
     fn operate(&self, right: &Self) -> Self {
-        W((self.0 + right.0) % P)
+        Fp((self.0 + right.0) % P)
     }
 }
-impl AbstractMagma<Multiplicative> for W {
+impl AbstractMagma<Multiplicative> for Fp {
     fn operate(&self, right: &Self) -> Self {
-        W((self.0 * right.0) % P)
+        Fp((self.0 * right.0) % P)
     }
 }
 
-impl TwoSidedInverse<Additive> for W {
+impl TwoSidedInverse<Additive> for Fp {
     fn two_sided_inverse(&self) -> Self {
-        W(P - self.0)
+        Fp(P - self.0)
     }
 }
 
-impl TwoSidedInverse<Multiplicative> for W {
+impl TwoSidedInverse<Multiplicative> for Fp {
     fn two_sided_inverse(&self) -> Self {
         let (mut a, mut m, mut x0, mut inv) = (self.0, P, 0u128, 1u128);
         while a > 1 {
@@ -73,34 +73,34 @@ impl TwoSidedInverse<Multiplicative> for W {
             std::mem::swap(&mut a, &mut m);
             std::mem::swap(&mut x0, &mut inv);
         }
-        W(inv)
+        Fp(inv)
     }
 }
 
-impl Identity<Additive> for W {
+impl Identity<Additive> for Fp {
     fn identity() -> Self {
-        W(0)
+        Fp(0)
     }
 }
 
-impl Identity<Multiplicative> for W {
+impl Identity<Multiplicative> for Fp {
     fn identity() -> Self {
-        W(1)
+        Fp(1)
     }
 }
 
-impl Add<W> for W {
-    type Output = W;
+impl Add<Fp> for Fp {
+    type Output = Fp;
 
-    fn add(self, rhs: W) -> W {
+    fn add(self, rhs: Fp) -> Fp {
         AbstractMagma::<Additive>::operate(&self, &rhs)
     }
 }
 
-impl Sub<W> for W {
-    type Output = W;
+impl Sub<Fp> for Fp {
+    type Output = Fp;
 
-    fn sub(self, rhs: W) -> W {
+    fn sub(self, rhs: Fp) -> Fp {
         AbstractMagma::<Additive>::operate(
             &self,
             &TwoSidedInverse::<Additive>::two_sided_inverse(&rhs),
@@ -108,28 +108,28 @@ impl Sub<W> for W {
     }
 }
 
-impl AddAssign<W> for W {
-    fn add_assign(&mut self, rhs: W) {
+impl AddAssign<Fp> for Fp {
+    fn add_assign(&mut self, rhs: Fp) {
         self.0 = self.add(rhs).0;
     }
 }
 
-impl SubAssign<W> for W {
-    fn sub_assign(&mut self, rhs: W) {
+impl SubAssign<Fp> for Fp {
+    fn sub_assign(&mut self, rhs: Fp) {
         self.0 = self.sub(rhs).0;
     }
 }
 
-impl Neg for W {
-    type Output = W;
+impl Neg for Fp {
+    type Output = Fp;
 
-    fn neg(self) -> W {
+    fn neg(self) -> Fp {
         TwoSidedInverse::<Additive>::two_sided_inverse(&self)
     }
 }
 
-impl Zero for W {
-    fn zero() -> W {
+impl Zero for Fp {
+    fn zero() -> Fp {
         Identity::<Additive>::identity()
     }
 
@@ -138,37 +138,46 @@ impl Zero for W {
     }
 }
 
-impl One for W {
-    fn one() -> W {
+impl One for Fp {
+    fn one() -> Fp {
         Identity::<Multiplicative>::identity()
     }
 }
 
-impl Mul<W> for W {
-    type Output = W;
+impl Mul<Fp> for Fp {
+    type Output = Fp;
 
-    fn mul(self, rhs: W) -> W {
+    fn mul(self, rhs: Fp) -> Fp {
         AbstractMagma::<Multiplicative>::operate(&self, &rhs)
     }
 }
 
-impl Div<W> for W {
-    type Output = W;
+impl Div<Fp> for Fp {
+    type Output = Fp;
 
-    fn div(self, rhs: W) -> W {
+    fn div(self, rhs: Fp) -> Fp {
         self.mul(TwoSidedInverse::<Multiplicative>::two_sided_inverse(&rhs))
     }
 }
 
-impl MulAssign<W> for W {
-    fn mul_assign(&mut self, rhs: W) {
+impl MulAssign<Fp> for Fp {
+    fn mul_assign(&mut self, rhs: Fp) {
         self.0 = self.mul(rhs).0
     }
 }
 
-impl DivAssign<W> for W {
-    fn div_assign(&mut self, rhs: W) {
+impl DivAssign<Fp> for Fp {
+    fn div_assign(&mut self, rhs: Fp) {
         self.0 = self.div(rhs).0
+    }
+}
+
+impl Rand for Fp {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let x0: u128 = rng.gen::<u64>() as u128;
+        let x1: u128 = rng.gen::<u64>() as u128;
+        let x = x0 + (x1 << std::mem::size_of::<u128>() * 8 / 2);
+        Fp(x % P)
     }
 }
 
@@ -180,6 +189,6 @@ mod tests {
     #[test]
     fn test_trait_impl() {
         fn is_field<T: Field>() {}
-        is_field::<W>();
+        is_field::<Fp>();
     }
 }
