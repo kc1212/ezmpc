@@ -167,7 +167,6 @@ mod tests {
         let node_chans = create_node_chans(n);
 
         // check for the number of triples in prog and generate enough triples for it
-        // TODO check this works correctly
         let triple_count = prog
             .iter()
             .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))

@@ -6,12 +6,13 @@ use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-const P: u128 = 18446744073709551557;
+type FpRepr = u128;
+const P: FpRepr = 18446744073709551557;
 
 #[derive(Alga, Copy, Clone, PartialEq, Eq, Debug)]
 #[alga_traits(Field(Additive, Multiplicative))]
 #[alga_quickcheck]
-pub struct Fp(u128); // we can only hold 64-bit values
+pub struct Fp(FpRepr); // we can only hold 64-bit values
 
 impl AbsDiffEq for Fp {
     type Epsilon = Fp;
@@ -35,7 +36,7 @@ impl RelativeEq for Fp {
 
 impl Arbitrary for Fp {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        Fp(u128::arbitrary(g) % P)
+        Fp(FpRepr::arbitrary(g) % P)
     }
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         Box::new(self.0.shrink().map(Fp))
@@ -59,21 +60,36 @@ impl TwoSidedInverse<Additive> for Fp {
     }
 }
 
+/// taken from https://github.com/rust-num/num-integer/blob/19ab37c59d038e05f34d7817dd3ddd2c490d982c/src/lib.rs#L165
+fn egcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
+    let mut s: (FpRepr, FpRepr) = (0, 1);
+    let mut t: (FpRepr, FpRepr) = (1, 0);
+    let mut r = (b.0, a.0);
+
+    while !r.0.is_zero() {
+        let q = r.1.clone() / r.0.clone();
+        let f = |mut r: (FpRepr, FpRepr)| {
+            std::mem::swap(&mut r.0, &mut r.1);
+            // r.0 = r.0 - q * r.1;
+            let neg_qr1 = P - ((q * r.1) % P);
+            r.0 = (r.0 + neg_qr1) % P;
+            r
+        };
+        r = f(r);
+        s = f(s);
+        t = f(t);
+    }
+    (Fp(r.1), Fp(s.1), Fp(t.1))
+}
+
 impl TwoSidedInverse<Multiplicative> for Fp {
     fn two_sided_inverse(&self) -> Self {
-        let (mut a, mut m, mut x0, mut inv) = (self.0, P, 0u128, 1u128);
-        while a > 1 {
-            let tmp = ((a / m) * x0) % P;
-            if tmp > inv {
-                inv = ((P + inv) - tmp) % P;
-            } else {
-                inv -= tmp;
-            }
-            a = a % m;
-            std::mem::swap(&mut a, &mut m);
-            std::mem::swap(&mut x0, &mut inv);
+        let (gcd, x, _) = egcd(*self, Fp(P));
+        if gcd == One::one() {
+            x
+        } else {
+            panic!("multiplicative inverse does not exist")
         }
-        Fp(inv)
     }
 }
 
@@ -172,11 +188,16 @@ impl DivAssign<Fp> for Fp {
     }
 }
 
+fn rand_u128<R: Rng>(rng: &mut R) -> u128 {
+    let x0: u128 = rng.gen::<u64>() as u128;
+    let x1: u128 = rng.gen::<u64>() as u128;
+    let x = x0 + (x1 << std::mem::size_of::<u128>() * 8 / 2);
+    x
+}
+
 impl Rand for Fp {
     fn rand<R: Rng>(rng: &mut R) -> Self {
-        let x0: u128 = rng.gen::<u64>() as u128;
-        let x1: u128 = rng.gen::<u64>() as u128;
-        let x = x0 + (x1 << std::mem::size_of::<u128>() * 8 / 2);
+        let x = rand_u128(rng);
         Fp(x % P)
     }
 }
