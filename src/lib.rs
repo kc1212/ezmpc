@@ -1,5 +1,6 @@
 pub mod crypto;
 pub mod error;
+mod fake_prep;
 pub mod message;
 pub mod node;
 pub mod synchronizer;
@@ -22,7 +23,7 @@ mod tests {
 
     use std::thread::JoinHandle;
 
-    use crate::crypto::{combine, generate_triple, share, Fp};
+    use crate::crypto::{unauth_combine, unauth_share, unauth_triple, Fp};
     use crate::message::*;
     use crate::node::Node;
     use crate::synchronizer::Synchronizer;
@@ -144,7 +145,7 @@ mod tests {
         assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
 
-    fn transpose<T: Clone>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
+    fn transpose<T: Clone>(v: &Vec<Vec<T>>) -> Vec<Vec<T>> {
         assert!(!v.is_empty());
         (0..v[0].len())
             .map(|i| v.iter().map(|inner| inner[i].clone()).collect::<Vec<T>>())
@@ -162,13 +163,14 @@ mod tests {
         let node_chans = create_node_chans(n);
 
         // check for the number of triples in prog and generate enough triples for it
+        // TODO check this works correctly
         let triple_count = prog
             .iter()
             .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))
             .count();
         let triple_chans = create_triple_chans(n, triple_count);
         for _ in 0..triple_count {
-            let triple = generate_triple(n, rng);
+            let triple = unauth_triple(n, rng);
             for (i, (s, _)) in triple_chans.iter().enumerate() {
                 s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
             }
@@ -183,12 +185,12 @@ mod tests {
                     sync_chans_for_node.1[i].clone(),
                     triple_chans[i].1.clone(),
                     get_row(&node_chans, i)
-                        .iter()
-                        .map(|(s, _)| s.clone())
+                        .into_iter()
+                        .map(|(s, _)| s)
                         .collect(),
                     get_col(&node_chans, i)
-                        .iter()
-                        .map(|(_, r)| r.clone())
+                        .into_iter()
+                        .map(|(_, r)| r)
                         .collect(),
                     prog.clone(),
                     regs[i],
@@ -203,9 +205,9 @@ mod tests {
         }
         assert_eq!(
             expected,
-            transpose(output_shares)
+            transpose(&output_shares)
                 .iter()
-                .map(|shares| combine(shares))
+                .map(|shares| unauth_combine(shares))
                 .collect::<Vec<Fp>>()
         );
         assert_eq!((), sync_handle.join().unwrap().unwrap());
@@ -222,7 +224,7 @@ mod tests {
 
         let rng = &mut XorShiftRng::from_seed(SEED);
         let zero = Fp::zero();
-        let regs: Vec<vm::Reg> = transpose(vec![share(&zero, n, rng)])
+        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&zero, n, rng)])
             .iter()
             .map(|v| vec_to_reg(v))
             .collect();
@@ -255,10 +257,11 @@ mod tests {
         let y: Fp = rng.gen();
         let expected = x * y;
 
-        let regs: Vec<vm::Reg> = transpose(vec![share(&x, n, rng), share(&y, n, rng)])
-            .iter()
-            .map(|v| vec_to_reg(v))
-            .collect();
+        let regs: Vec<vm::Reg> =
+            transpose(&vec![unauth_share(&x, n, rng), unauth_share(&y, n, rng)])
+                .iter()
+                .map(|v| vec_to_reg(v))
+                .collect();
 
         generic_integration_test(n, prog, regs, vec![expected], rng);
     }
