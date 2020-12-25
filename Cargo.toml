@@ -14,6 +14,14 @@ quick-error = "2.0"
 log = "0.4"
 env_logger = "0.8"
 
+# alga
+alga = "0.9"
+alga_derive = "0.9"
+approx = "0.3"
+num-traits = "0.2"
+num-integer = "0.1"
+quickcheck = "0.9"
+
 [dev-dependencies]
 itertools = "0.9.0"
 test-env-log = "0.2"

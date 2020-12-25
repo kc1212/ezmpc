@@ -1,3 +1,4 @@
+mod algebra;
 pub mod crypto;
 pub mod error;
 mod fake_prep;
@@ -8,10 +9,14 @@ pub mod vm;
 
 extern crate crossbeam_channel;
 extern crate ff;
-extern crate rand;
-#[macro_use]
-extern crate quick_error;
 extern crate log;
+extern crate quick_error;
+extern crate rand;
+
+extern crate alga;
+extern crate alga_derive;
+extern crate num_integer;
+extern crate num_traits;
 
 #[cfg(test)]
 extern crate itertools;

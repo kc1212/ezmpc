@@ -2,6 +2,7 @@ use crate::crypto::Fp;
 use crate::message;
 use crate::vm;
 use crossbeam_channel;
+use quick_error::quick_error;
 use std::fmt;
 
 #[derive(Debug)]
