@@ -3,7 +3,6 @@ use crate::crypto::AuthShare;
 use crate::error::{EvalError, SomeError};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use num_traits::Zero;
 use std::cmp::min;
 use std::ops;
 use std::thread;
@@ -22,9 +21,9 @@ pub struct Reg {
 const REG_SIZE: usize = 128;
 
 pub struct VM {
+    id: PartyID,
     alpha_share: Fp, // TODO could be a reference type
     reg: Reg,
-    id: PartyID,
 }
 
 pub fn empty_reg() -> Reg {
@@ -81,42 +80,47 @@ fn wrap_option<T>(v: Option<T>, err: EvalError) -> Result<T, SomeError> {
 }
 
 impl VM {
-    pub fn spawn(id: PartyID, reg: Reg, i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
+    pub fn spawn(
+        id: PartyID,
+        alpha_share: Fp,
+        reg: Reg,
+        r_chan: Receiver<Instruction>,
+        s_chan: Sender<Action>,
+    ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
-            let mut vm = VM::new(id, reg);
-            vm.listen(i_chan, o_chan)
+            let mut vm = VM::new(id, alpha_share, reg);
+            vm.listen(r_chan, s_chan)
         })
     }
 
-    fn new(id: PartyID, reg: Reg) -> VM {
-        let alpha_share = Fp::zero(); // FIXME
-        VM { alpha_share, reg, id }
+    fn new(id: PartyID, alpha_share: Fp, reg: Reg) -> VM {
+        VM { id, alpha_share, reg }
     }
 
     // listen for incoming instructions, send some result back to sender
-    fn listen(&mut self, i_chan: Receiver<Instruction>, o_chan: Sender<Action>) -> Result<Vec<Fp>, SomeError> {
+    fn listen(&mut self, r_chan: Receiver<Instruction>, s_chan: Sender<Action>) -> Result<Vec<Fp>, SomeError> {
         let mut output = Vec::new();
 
         loop {
-            let inst = i_chan.recv_timeout(Duration::from_secs(1))?;
+            let inst = r_chan.recv_timeout(Duration::from_secs(1))?;
             match inst {
-                Instruction::CAdd(r0, r1, r2) => o_chan.send(self.do_clear_op(r0, r1, r2, ops::Add::add)?)?,
-                Instruction::CSub(r0, r1, r2) => o_chan.send(self.do_clear_op(r0, r1, r2, ops::Sub::sub)?)?,
-                Instruction::CAddTo(r0, r1, r2, id) => o_chan.send(self.do_clear_op_for_party(r0, r1, r2, ops::Add::add, id)?)?,
-                Instruction::CMul(r0, r1, r2) => o_chan.send(self.do_clear_op(r0, r1, r2, ops::Mul::mul)?)?,
-                Instruction::SAdd(r0, r1, r2) => o_chan.send(self.do_secret_op(r0, r1, r2, ops::Add::add)?)?,
-                Instruction::SSub(r0, r1, r2) => o_chan.send(self.do_secret_op(r0, r1, r2, ops::Sub::sub)?)?,
-                Instruction::MAdd(r0, r1, r2, id) => o_chan.send(self.do_mixed_add(r0, r1, r2, id)?)?,
-                Instruction::MMul(r0, r1, r2) => o_chan.send(self.do_mixed_mul(r0, r1, r2)?)?,
-                Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &o_chan)?,
-                Instruction::Open(to, from) => self.process_open(to, from, &o_chan)?,
+                Instruction::CAdd(r0, r1, r2) => s_chan.send(self.do_clear_op(r0, r1, r2, ops::Add::add)?)?,
+                Instruction::CSub(r0, r1, r2) => s_chan.send(self.do_clear_op(r0, r1, r2, ops::Sub::sub)?)?,
+                Instruction::CAddTo(r0, r1, r2, id) => s_chan.send(self.do_clear_op_for_party(r0, r1, r2, ops::Add::add, id)?)?,
+                Instruction::CMul(r0, r1, r2) => s_chan.send(self.do_clear_op(r0, r1, r2, ops::Mul::mul)?)?,
+                Instruction::SAdd(r0, r1, r2) => s_chan.send(self.do_secret_op(r0, r1, r2, ops::Add::add)?)?,
+                Instruction::SSub(r0, r1, r2) => s_chan.send(self.do_secret_op(r0, r1, r2, ops::Sub::sub)?)?,
+                Instruction::MAdd(r0, r1, r2, id) => s_chan.send(self.do_mixed_add(r0, r1, r2, id)?)?,
+                Instruction::MMul(r0, r1, r2) => s_chan.send(self.do_mixed_mul(r0, r1, r2)?)?,
+                Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &s_chan)?,
+                Instruction::Open(to, from) => self.process_open(to, from, &s_chan)?,
                 Instruction::COutput(reg) => {
                     output.push(wrap_option(self.reg.clear[reg], EvalError::OutputEmptyReg)?);
-                    o_chan.send(Action::None)?
+                    s_chan.send(Action::None)?
                 }
                 Instruction::SOutput(reg) => {
                     output.push(wrap_option(self.reg.secret[reg], EvalError::OutputEmptyReg)?.share);
-                    o_chan.send(Action::None)?
+                    s_chan.send(Action::None)?
                 }
                 Instruction::Stop => return Ok(output),
             }
@@ -188,9 +192,9 @@ impl VM {
         }
     }
 
-    fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, o_chan: &Sender<Action>) -> Result<(), SomeError> {
+    fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
         let (s, r) = bounded(1);
-        o_chan.send(Action::Triple(s))?;
+        s_chan.send(Action::Triple(s))?;
 
         // wait for the triple
         let triple = r.recv_timeout(Duration::from_secs(1))?;
@@ -200,13 +204,13 @@ impl VM {
         Ok(())
     }
 
-    fn process_open(&mut self, to: RegAddr, from: RegAddr, o_chan: &Sender<Action>) -> Result<(), SomeError> {
+    fn process_open(&mut self, to: RegAddr, from: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
         match self.reg.secret[from] {
             None => Err(EvalError::OpenEmptyReg.into()),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
                 // TODO implement the proper open protocol
-                o_chan.send(Action::Open(for_opening.share, s))?;
+                s_chan.send(Action::Open(for_opening.share, s))?;
 
                 // wait for the response
                 // TODO parameterize these timeouts
@@ -238,7 +242,8 @@ mod tests {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
-        let handle = VM::spawn(0, reg, r_instruction_chan, s_action_chan);
+        let fake_alpha_share = Fp::zero();
+        let handle = VM::spawn(0, fake_alpha_share, reg, r_instruction_chan, s_action_chan);
         for instruction in prog {
             s_instruction_chan.send(instruction)?;
             if instruction == Instruction::Stop {

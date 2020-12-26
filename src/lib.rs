@@ -93,9 +93,11 @@ mod tests {
         let one = Fp::one();
         let two = one + one;
 
+        let fake_alpha_share = Fp::zero();
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handle = Node::spawn(
             0,
+            fake_alpha_share,
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
@@ -134,9 +136,11 @@ mod tests {
         let two = one + one;
         triple_sender.send((zero, one, two)).unwrap();
 
+        let fake_alpha_share = Fp::zero();
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handle = Node::spawn(
             0,
+            fake_alpha_share,
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
@@ -169,11 +173,13 @@ mod tests {
         let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
         let triple_chans = create_triple_chans(n, triple_count);
 
+        let fake_alpha_share = Fp::zero();
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handles: Vec<JoinHandle<_>> = (0..n)
             .map(|i| {
                 let node_handle = Node::spawn(
                     i,
+                    fake_alpha_share,
                     sync_chans_for_node.0[i].clone(),
                     sync_chans_for_node.1[i].clone(),
                     triple_chans[i].1.clone(),

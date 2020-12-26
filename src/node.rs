@@ -23,6 +23,7 @@ pub struct Node {
 impl Node {
     pub fn spawn(
         id: vm::PartyID,
+        alpha_share: Fp,
         s_sync_chan: Sender<SyncMsgReply>,
         r_sync_chan: Receiver<SyncMsg>,
         triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
@@ -40,11 +41,11 @@ impl Node {
                 r_node_chan,
                 instructions,
             };
-            s.listen(id, reg)
+            s.listen(id, alpha_share, reg)
         })
     }
 
-    fn listen(&mut self, id: vm::PartyID, reg: vm::Reg) -> Result<Vec<Fp>, SomeError> {
+    fn listen(&mut self, id: vm::PartyID, alpha_share: Fp, reg: vm::Reg) -> Result<Vec<Fp>, SomeError> {
         // wait for start
         loop {
             let msg = self.r_sync_chan.recv()?;
@@ -59,7 +60,7 @@ impl Node {
         // start the vm
         let (s_inst_chan, r_inst_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
-        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, reg, r_inst_chan, s_action_chan);
+        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inst_chan, s_action_chan);
         let mut instruction_counter = 0;
         let mut triples = Vec::new();
 
