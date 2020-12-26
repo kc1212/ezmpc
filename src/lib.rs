@@ -88,7 +88,7 @@ mod tests {
         let (_triple_sender, triple_receiver) = bounded(5);
         let prog = vec![
             vm::Instruction::CAdd(2, 1, 0),
-            vm::Instruction::Output(2),
+            vm::Instruction::COutput(2),
             vm::Instruction::Stop,
         ];
 
@@ -119,9 +119,9 @@ mod tests {
         let (triple_sender, triple_receiver) = bounded(5);
         let prog = vec![
             vm::Instruction::Triple(0, 1, 2),
-            vm::Instruction::Output(0),
-            vm::Instruction::Output(1),
-            vm::Instruction::Output(2),
+            vm::Instruction::COutput(0),
+            vm::Instruction::COutput(1),
+            vm::Instruction::COutput(2),
             vm::Instruction::Stop,
         ];
 
@@ -223,7 +223,7 @@ mod tests {
         let n = 3;
         let prog = vec![
             vm::Instruction::Open(0, 0),
-            vm::Instruction::Output(0),
+            vm::Instruction::COutput(0),
             vm::Instruction::Stop,
         ];
 
@@ -253,7 +253,7 @@ mod tests {
             vm::Instruction::CAdd(10, 4, 7),       // [c] + [e*b]
             vm::Instruction::CAdd(10, 10, 8),      //     + [d*a]
             vm::Instruction::CAddTo(10, 10, 9, 0), //     + e*d
-            vm::Instruction::Output(10),
+            vm::Instruction::COutput(10),
             vm::Instruction::Stop,
         ];
 
