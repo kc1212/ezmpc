@@ -1,6 +1,8 @@
 use crate::algebra::Fp;
+use crate::crypto::AuthShare;
 use crate::message;
 use crate::vm;
+
 use crossbeam_channel;
 use quick_error::quick_error;
 use std::fmt;
@@ -55,7 +57,7 @@ quick_error! {
             display("send Instruction error: {}", err)
             from()
         }
-        SendErrorTriple(err: crossbeam_channel::SendError<(Fp, Fp, Fp)>) {
+        SendErrorTriple(err: crossbeam_channel::SendError<(AuthShare, AuthShare, AuthShare)>) {
             display("send Triple error: {}", err)
             from()
         }

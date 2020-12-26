@@ -73,11 +73,7 @@ pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
     let c: Fp = a * b;
-    (
-        unauth_share(&a, n, rng),
-        unauth_share(&b, n, rng),
-        unauth_share(&c, n, rng),
-    )
+    (unauth_share(&a, n, rng), unauth_share(&b, n, rng), unauth_share(&c, n, rng))
 }
 
 pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<AuthShare> {
@@ -92,11 +88,11 @@ pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<
         .collect()
 }
 
-pub fn auth_triple(
-    n: usize,
-    alpha: &Fp,
-    rng: &mut impl Rng,
-) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
+pub fn fake_auth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<AuthShare> {
+    auth_share(secret, n, &Fp::zero(), rng)
+}
+
+pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
     let c: Fp = a * b;
@@ -105,6 +101,10 @@ pub fn auth_triple(
         auth_share(&b, n, alpha, rng),
         auth_share(&c, n, alpha, rng),
     )
+}
+
+pub fn fake_auth_triple(n: usize, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
+    auth_triple(n, &Fp::zero(), rng)
 }
 
 #[cfg(test)]
@@ -141,38 +141,21 @@ mod tests {
         assert_eq!(secret + secret2, unauth_combine(&new_shares));
 
         let const_term: Fp = rng.gen();
-        assert_eq!(
-            secret * const_term,
-            unauth_combine(&shares.iter().map(|s| s * const_term).collect())
-        );
-        assert_eq!(
-            secret2 * const_term,
-            unauth_combine(&shares2.iter().map(|s| s * const_term).collect())
-        );
+        assert_eq!(secret * const_term, unauth_combine(&shares.iter().map(|s| s * const_term).collect()));
+        assert_eq!(secret2 * const_term, unauth_combine(&shares2.iter().map(|s| s * const_term).collect()));
     }
 
     fn unauth_triple_protocol(x: Fp, y: Fp, n: usize, rng: &mut impl Rng) {
         let (a_boxes, b_boxes, c_boxes) = unauth_triple(n, rng);
-        assert_eq!(
-            unauth_combine(&c_boxes),
-            unauth_combine(&a_boxes) * unauth_combine(&b_boxes)
-        );
+        assert_eq!(unauth_combine(&c_boxes), unauth_combine(&a_boxes) * unauth_combine(&b_boxes));
 
         let x_boxes = unauth_share(&x, n, rng);
         let y_boxes = unauth_share(&y, n, rng);
         assert_eq!(unauth_combine(&x_boxes), x);
         assert_eq!(unauth_combine(&y_boxes), y);
 
-        let e_boxes: Vec<Fp> = x_boxes
-            .into_iter()
-            .zip(&a_boxes)
-            .map(|(x, a)| x - a)
-            .collect();
-        let d_boxes: Vec<Fp> = y_boxes
-            .into_iter()
-            .zip(&b_boxes)
-            .map(|(y, b)| y - b)
-            .collect();
+        let e_boxes: Vec<Fp> = x_boxes.into_iter().zip(&a_boxes).map(|(x, a)| x - a).collect();
+        let d_boxes: Vec<Fp> = y_boxes.into_iter().zip(&b_boxes).map(|(y, b)| y - b).collect();
 
         let e = unauth_combine(&e_boxes);
         let d = unauth_combine(&d_boxes);
@@ -214,11 +197,7 @@ mod tests {
         let x = unauth_combine(&shares.iter().map(|x| x.share).collect());
 
         // in practice these ds values are committed first before revealing
-        let ds: Vec<_> = alpha_shares
-            .into_iter()
-            .zip(shares)
-            .map(|(a, share)| a * x - share.mac)
-            .collect();
+        let ds: Vec<_> = alpha_shares.into_iter().zip(shares).map(|(a, share)| a * x - share.mac).collect();
         let d = unauth_combine(&ds);
         (Fp::zero() == d, x)
     }
@@ -251,10 +230,7 @@ mod tests {
         assert_eq!(a - b, auth_combine(&a_sub_b_shares, &alpha_shares));
 
         // check mul by constant
-        let mul_const_shares: Vec<_> = a_shares
-            .iter()
-            .map(|share| share.mul_const(&const_c))
-            .collect();
+        let mul_const_shares: Vec<_> = a_shares.iter().map(|share| share.mul_const(&const_c)).collect();
         assert_eq!(a * const_c, auth_combine(&mul_const_shares, &alpha_shares));
 
         // check add by constant

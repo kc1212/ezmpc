@@ -34,16 +34,18 @@ pub fn empty_reg() -> Reg {
     }
 }
 
-pub fn vec_to_reg(v: &Vec<Fp>) -> Reg {
+pub fn vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<AuthShare>) -> Reg {
     let mut clear = [None; REG_SIZE];
-    let n = min(v.len(), REG_SIZE);
-    for i in 0..n {
-        clear[i] = Some(v[i]);
+    let mut secret = [None; REG_SIZE];
+    let cn = min(vclear.len(), REG_SIZE);
+    for i in 0..cn {
+        clear[i] = Some(vclear[i]);
     }
-    Reg {
-        clear,
-        secret: [None; REG_SIZE],
+    let sn = min(vsecret.len(), REG_SIZE);
+    for i in 0..sn {
+        secret[i] = Some(vsecret[i]);
     }
+    Reg { clear, secret }
 }
 
 // TODO might be a problem for error handling if we cannot derive Eq/PartialEq
@@ -51,7 +53,7 @@ pub fn vec_to_reg(v: &Vec<Fp>) -> Reg {
 pub enum Action {
     None,
     Open(Fp, Sender<Fp>),
-    Triple(Sender<(Fp, Fp, Fp)>),
+    Triple(Sender<(AuthShare, AuthShare, AuthShare)>),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -191,19 +193,20 @@ impl VM {
         o_chan.send(Action::Triple(s))?;
 
         // wait for the triple
-        let triple: (Fp, Fp, Fp) = r.recv_timeout(Duration::from_secs(1))?;
-        self.reg.clear[r0] = Some(triple.0);
-        self.reg.clear[r1] = Some(triple.1);
-        self.reg.clear[r2] = Some(triple.2);
+        let triple = r.recv_timeout(Duration::from_secs(1))?;
+        self.reg.secret[r0] = Some(triple.0);
+        self.reg.secret[r1] = Some(triple.1);
+        self.reg.secret[r2] = Some(triple.2);
         Ok(())
     }
 
     fn process_open(&mut self, to: RegAddr, from: RegAddr, o_chan: &Sender<Action>) -> Result<(), SomeError> {
-        match self.reg.clear[from] {
+        match self.reg.secret[from] {
             None => Err(EvalError::OpenEmptyReg.into()),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
-                o_chan.send(Action::Open(for_opening, s))?;
+                // TODO implement the proper open protocol
+                o_chan.send(Action::Open(for_opening.share, s))?;
 
                 // wait for the response
                 // TODO parameterize these timeouts
@@ -219,9 +222,6 @@ impl VM {
 mod tests {
     use super::*;
     use num_traits::{One, Zero};
-    use rand::{Rng, SeedableRng, XorShiftRng};
-
-    const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
     fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_open_chan) = bounded(5);
@@ -229,7 +229,12 @@ mod tests {
         vm_runner(prog, reg, dummy_open_chan, dummy_triple_chan)
     }
 
-    fn vm_runner(prog: Vec<Instruction>, reg: Reg, open_chan: Receiver<Fp>, triple_chan: Receiver<(Fp, Fp, Fp)>) -> Result<Vec<Fp>, SomeError> {
+    fn vm_runner(
+        prog: Vec<Instruction>,
+        reg: Reg,
+        open_chan: Receiver<Fp>,
+        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+    ) -> Result<Vec<Fp>, SomeError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
@@ -289,7 +294,7 @@ mod tests {
         F: Fn(RegAddr, RegAddr, RegAddr) -> Instruction,
     {
         let prog = vec![op(2, 1, 0), Instruction::COutput(2), Instruction::Stop];
-        let reg = vec_to_reg(&vec![a, b]);
+        let reg = vec_to_reg(&vec![a, b], &vec![]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
@@ -298,7 +303,7 @@ mod tests {
     fn compute_add_to_party(a: Fp, b: Fp, id: PartyID) -> Fp {
         let prog = vec![Instruction::CAddTo(2, 1, 0, id), Instruction::COutput(2), Instruction::Stop];
 
-        let reg = vec_to_reg(&vec![a, b]);
+        let reg = vec_to_reg(&vec![a, b], &vec![]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
@@ -372,7 +377,11 @@ mod tests {
     #[test]
     fn test_open() {
         let prog = vec![Instruction::Open(0, 0), Instruction::COutput(0), Instruction::Stop];
-        let reg = vec_to_reg(&vec![Fp::one()]);
+        let mut reg = empty_reg();
+        reg.secret[0] = Some(AuthShare {
+            share: Fp::one(),
+            mac: Fp::zero(),
+        });
 
         let (s, r) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
@@ -386,23 +395,29 @@ mod tests {
     fn test_triple() {
         let prog = vec![
             Instruction::Triple(0, 1, 2),
-            Instruction::COutput(0),
-            Instruction::COutput(1),
-            Instruction::COutput(2),
+            Instruction::SOutput(0),
+            Instruction::SOutput(1),
+            Instruction::SOutput(2),
             Instruction::Stop,
         ];
 
         let (s, r) = bounded(5);
         let (_, dummy_open_chan) = bounded(5);
-        let zero = Fp::zero();
-        let one = Fp::one();
+        let zero = AuthShare {
+            share: Fp::zero(),
+            mac: Fp::zero(),
+        };
+        let one = AuthShare {
+            share: Fp::one(),
+            mac: Fp::one(),
+        };
         let two = one + one;
         s.send((zero, one, two)).unwrap();
         let result = vm_runner(prog, empty_reg(), dummy_open_chan, r).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], zero);
-        assert_eq!(result[1], one);
-        assert_eq!(result[2], two);
+        assert_eq!(result[0], zero.share);
+        assert_eq!(result[1], one.share);
+        assert_eq!(result[2], two.share);
     }
 
     // TODO test for failures

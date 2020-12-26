@@ -3,6 +3,7 @@ use crate::error::SomeError;
 use crate::message::*;
 use crate::vm;
 
+use crate::crypto::AuthShare;
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::debug;
 use num_traits::Zero;
@@ -13,7 +14,7 @@ use std::time::Duration;
 pub struct Node {
     s_sync_chan: Sender<SyncMsgReply>,
     r_sync_chan: Receiver<SyncMsg>,
-    triple_chan: Receiver<(Fp, Fp, Fp)>,
+    triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
     s_node_chan: Vec<Sender<Fp>>,
     r_node_chan: Vec<Receiver<Fp>>,
     instructions: Vec<vm::Instruction>,
@@ -24,7 +25,7 @@ impl Node {
         id: vm::PartyID,
         s_sync_chan: Sender<SyncMsgReply>,
         r_sync_chan: Receiver<SyncMsg>,
-        triple_chan: Receiver<(Fp, Fp, Fp)>,
+        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
         s_node_chan: Vec<Sender<Fp>>,
         r_node_chan: Vec<Receiver<Fp>>,
         instructions: Vec<vm::Instruction>,
@@ -102,7 +103,7 @@ impl Node {
                                         sender.send(result)?
                                     }
                                     vm::Action::Triple(sender) => {
-                                        let triple: (Fp, Fp, Fp) = match triples.pop() {
+                                        let triple = match triples.pop() {
                                             Some(t) => t,
                                             None => self.triple_chan.recv_timeout(Duration::from_secs(1))?,
                                         };

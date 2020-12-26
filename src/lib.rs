@@ -34,12 +34,11 @@ mod tests {
     use test_env_log::test;
 
     use crate::algebra::Fp;
-    use crate::crypto::{unauth_combine, unauth_share, unauth_triple};
+    use crate::crypto::*;
     use crate::message::*;
     use crate::node::Node;
     use crate::synchronizer::Synchronizer;
     use crate::vm;
-    use crate::vm::vec_to_reg;
 
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
@@ -66,7 +65,10 @@ mod tests {
         output
     }
 
-    fn create_triple_chans(n: usize, capacity: usize) -> Vec<(Sender<(Fp, Fp, Fp)>, Receiver<(Fp, Fp, Fp)>)> {
+    fn create_triple_chans(
+        n: usize,
+        capacity: usize,
+    ) -> Vec<(Sender<(AuthShare, AuthShare, AuthShare)>, Receiver<(AuthShare, AuthShare, AuthShare)>)> {
         (0..n).map(|_| bounded(capacity)).collect()
     }
 
@@ -83,7 +85,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_test_sync() {
+    fn integration_test_clear_add() {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (_triple_sender, triple_receiver) = bounded(5);
         let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
@@ -100,7 +102,7 @@ mod tests {
             vec![],
             vec![],
             prog,
-            vm::vec_to_reg(&vec![one, one]),
+            vm::vec_to_reg(&vec![one, one], &vec![]),
         );
 
         let answer = node_handle.join().unwrap().unwrap();
@@ -115,14 +117,20 @@ mod tests {
         let (triple_sender, triple_receiver) = bounded(5);
         let prog = vec![
             vm::Instruction::Triple(0, 1, 2),
-            vm::Instruction::COutput(0),
-            vm::Instruction::COutput(1),
-            vm::Instruction::COutput(2),
+            vm::Instruction::SOutput(0),
+            vm::Instruction::SOutput(1),
+            vm::Instruction::SOutput(2),
             vm::Instruction::Stop,
         ];
 
-        let zero = Fp::zero();
-        let one = Fp::one();
+        let zero = AuthShare {
+            share: Fp::zero(),
+            mac: Fp::zero(),
+        };
+        let one = AuthShare {
+            share: Fp::one(),
+            mac: Fp::one(),
+        };
         let two = one + one;
         triple_sender.send((zero, one, two)).unwrap();
 
@@ -140,9 +148,9 @@ mod tests {
 
         let answer = node_handle.join().unwrap().unwrap();
         assert_eq!(answer.len(), 3);
-        assert_eq!(answer[0], zero);
-        assert_eq!(answer[1], one);
-        assert_eq!(answer[2], two);
+        assert_eq!(answer[0], zero.share);
+        assert_eq!(answer[1], one.share);
+        assert_eq!(answer[2], two.share);
         assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
 
@@ -179,9 +187,22 @@ mod tests {
             .collect();
 
         for _ in 0..triple_count {
+            // TODO authenticate the triples properly
             let triple = unauth_triple(n, rng);
             for (i, (s, _)) in triple_chans.iter().enumerate() {
-                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
+                let triple0 = AuthShare {
+                    share: triple.0[i],
+                    mac: Fp::zero(),
+                };
+                let triple1 = AuthShare {
+                    share: triple.1[i],
+                    mac: Fp::zero(),
+                };
+                let triple2 = AuthShare {
+                    share: triple.2[i],
+                    mac: Fp::zero(),
+                };
+                s.send((triple0, triple1, triple2)).unwrap();
             }
         }
 
@@ -199,11 +220,14 @@ mod tests {
     #[test]
     fn integration_test_open() {
         let n = 3;
-        let prog = vec![vm::Instruction::Open(0, 0), vm::Instruction::COutput(0), vm::Instruction::Stop];
+        let prog = vec![vm::Instruction::Open(1, 0), vm::Instruction::COutput(1), vm::Instruction::Stop];
 
         let rng = &mut XorShiftRng::from_seed(SEED);
         let zero = Fp::zero();
-        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&zero, n, rng)]).iter().map(|v| vec_to_reg(v)).collect();
+        let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&zero, n, rng)])
+            .iter()
+            .map(|v| vm::vec_to_reg(&vec![], v))
+            .collect();
 
         generic_integration_test(n, prog, regs, vec![zero], rng);
     }
@@ -213,18 +237,18 @@ mod tests {
         // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
         let n = 3;
         let prog = vec![
-            vm::Instruction::Triple(2, 3, 4),      // [a], [b], [c]
-            vm::Instruction::CSub(5, 0, 2),        // [e] <- [x] - [a]
-            vm::Instruction::CSub(6, 1, 3),        // [d] <- [y] - [b]
-            vm::Instruction::Open(5, 5),           // e <- open [e]
-            vm::Instruction::Open(6, 6),           // d <- open [d]
-            vm::Instruction::CMul(7, 5, 3),        // e * [b]
-            vm::Instruction::CMul(8, 6, 2),        // d * [a]
-            vm::Instruction::CMul(9, 5, 6),        // e*d
-            vm::Instruction::CAdd(10, 4, 7),       // [c] + [e*b]
-            vm::Instruction::CAdd(10, 10, 8),      //     + [d*a]
-            vm::Instruction::CAddTo(10, 10, 9, 0), //     + e*d
-            vm::Instruction::COutput(10),
+            vm::Instruction::Triple(2, 3, 4),    // [a], [b], [c]
+            vm::Instruction::SSub(5, 0, 2),      // [e] <- [x] - [a]
+            vm::Instruction::SSub(6, 1, 3),      // [d] <- [y] - [b]
+            vm::Instruction::Open(5, 5),         // e <- open [e]
+            vm::Instruction::Open(6, 6),         // d <- open [d]
+            vm::Instruction::MMul(7, 3, 5),      // [b] * e
+            vm::Instruction::MMul(8, 2, 6),      // d * [a]
+            vm::Instruction::CMul(9, 5, 6),      // e*d
+            vm::Instruction::SAdd(10, 4, 7),     // [c] + [e*b]
+            vm::Instruction::SAdd(10, 10, 8),    //     + [d*a]
+            vm::Instruction::MAdd(10, 10, 9, 0), //     + e*d
+            vm::Instruction::SOutput(10),
             vm::Instruction::Stop,
         ];
 
@@ -233,9 +257,9 @@ mod tests {
         let y: Fp = rng.gen();
         let expected = x * y;
 
-        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&x, n, rng), unauth_share(&y, n, rng)])
+        let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&x, n, rng), fake_auth_share(&y, n, rng)])
             .iter()
-            .map(|v| vec_to_reg(v))
+            .map(|v| vm::vec_to_reg(&vec![], v))
             .collect();
 
         generic_integration_test(n, prog, regs, vec![expected], rng);
