@@ -84,7 +84,7 @@ impl Node {
                             debug!("Sending instruction {:?} to VM", inst);
                             s_inst_chan.send(inst)?;
 
-                            if inst == vm::Instruction::STOP {
+                            if inst == vm::Instruction::Stop {
                                 self.s_sync_chan.send(SyncMsgReply::Done)?;
                                 break;
                             } else {

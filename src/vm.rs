@@ -1,4 +1,5 @@
 use crate::algebra::Fp;
+use crate::crypto::AuthShare;
 use crate::error::{EvalError, SomeError};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -10,26 +11,36 @@ use std::time::Duration;
 type RegAddr = usize;
 pub type PartyID = usize;
 
-pub type Reg = [Option<Fp>; REG_SIZE];
-
-pub fn empty_reg() -> Reg {
-    [None; REG_SIZE]
-}
-
-pub fn vec_to_reg(v: &Vec<Fp>) -> Reg {
-    let mut reg = [None; REG_SIZE];
-    let n = min(v.len(), REG_SIZE);
-    for i in 0..n {
-        reg[i] = Some(v[i]);
-    }
-    reg
+#[derive(Copy, Clone, Debug)]
+pub struct Reg {
+    clear: [Option<Fp>; REG_SIZE],
+    secret: [Option<AuthShare>; REG_SIZE],
 }
 
 const REG_SIZE: usize = 128;
 
 pub struct VM {
-    register: Reg,
+    reg: Reg,
     id: PartyID,
+}
+
+pub fn empty_reg() -> Reg {
+    Reg {
+        clear: [None; REG_SIZE],
+        secret: [None; REG_SIZE],
+    }
+}
+
+pub fn vec_to_reg(v: &Vec<Fp>) -> Reg {
+    let mut clear = [None; REG_SIZE];
+    let n = min(v.len(), REG_SIZE);
+    for i in 0..n {
+        clear[i] = Some(v[i]);
+    }
+    Reg {
+        clear,
+        secret: [None; REG_SIZE],
+    }
 }
 
 // TODO might be a problem for error handling if we cannot derive Eq/PartialEq
@@ -42,14 +53,14 @@ pub enum Action {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Instruction {
-    ADD(RegAddr, RegAddr, RegAddr),
-    SUB(RegAddr, RegAddr, RegAddr),
-    ADDP(RegAddr, RegAddr, RegAddr, PartyID),
-    MUL(RegAddr, RegAddr, RegAddr),
-    TRIPLE(RegAddr, RegAddr, RegAddr),
-    OPEN(RegAddr, RegAddr),
-    OUTPUT(RegAddr),
-    STOP,
+    CAdd(RegAddr, RegAddr, RegAddr),            // clear add
+    CSub(RegAddr, RegAddr, RegAddr),            // clear sub
+    CAddTo(RegAddr, RegAddr, RegAddr, PartyID), // clear add to one party
+    CMul(RegAddr, RegAddr, RegAddr),            // clear mul
+    Triple(RegAddr, RegAddr, RegAddr),          // store triple
+    Open(RegAddr, RegAddr),                     // open a shared/secret value
+    Output(RegAddr),                            // output a clear value
+    Stop,                                       // stop the VM
 }
 
 fn wrap_option<T>(v: Option<T>, err: EvalError) -> Result<T, SomeError> {
@@ -73,7 +84,7 @@ impl VM {
     }
 
     fn new(id: PartyID, reg: Reg) -> VM {
-        VM { register: reg, id }
+        VM { reg, id }
     }
 
     // listen for incoming instructions, send some result back to sender
@@ -90,19 +101,19 @@ impl VM {
         loop {
             let inst = i_chan.recv_timeout(Duration::from_secs(1))?;
             match inst {
-                Instruction::ADD(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, addop)?)?,
-                Instruction::SUB(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, subop)?)?,
-                Instruction::ADDP(r0, r1, r2, id) => {
+                Instruction::CAdd(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, addop)?)?,
+                Instruction::CSub(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, subop)?)?,
+                Instruction::CAddTo(r0, r1, r2, id) => {
                     o_chan.send(self.do_op_for_party(r0, r1, r2, addop, id)?)?
                 }
-                Instruction::MUL(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, mulop)?)?,
-                Instruction::TRIPLE(r0, r1, r2) => self.process_triple(r0, r1, r2, &o_chan)?,
-                Instruction::OPEN(to, from) => self.process_open(to, from, &o_chan)?,
-                Instruction::OUTPUT(reg) => {
-                    output.push(wrap_option(self.register[reg], EvalError::OutputEmptyReg)?);
+                Instruction::CMul(r0, r1, r2) => o_chan.send(self.do_op(r0, r1, r2, mulop)?)?,
+                Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &o_chan)?,
+                Instruction::Open(to, from) => self.process_open(to, from, &o_chan)?,
+                Instruction::Output(reg) => {
+                    output.push(wrap_option(self.reg.clear[reg], EvalError::OutputEmptyReg)?);
                     o_chan.send(Action::None)?
                 }
-                Instruction::STOP => return Ok(output),
+                Instruction::Stop => return Ok(output),
             }
         }
     }
@@ -117,13 +128,13 @@ impl VM {
     where
         F: Fn(Fp, Fp) -> Fp,
     {
-        let c = self.register[r1]
-            .zip(self.register[r2])
+        let c = self.reg.clear[r1]
+            .zip(self.reg.clear[r2])
             .map(|(a, b)| op(a, b));
         match c {
             None => Err(EvalError::OpEmptyReg.into()),
             Some(x) => {
-                self.register[r0] = Some(x);
+                self.reg.clear[r0] = Some(x);
                 Ok(Action::None)
             }
         }
@@ -144,7 +155,7 @@ impl VM {
             self.do_op(r0, r1, r2, op)
         } else {
             // just copy the content from r1 to r0
-            self.register[r0] = self.register[r1];
+            self.reg.clear[r0] = self.reg.clear[r1];
             Ok(Action::None)
         }
     }
@@ -161,9 +172,9 @@ impl VM {
 
         // wait for the triple
         let triple: (Fp, Fp, Fp) = r.recv_timeout(Duration::from_secs(1))?;
-        self.register[r0] = Some(triple.0);
-        self.register[r1] = Some(triple.1);
-        self.register[r2] = Some(triple.2);
+        self.reg.clear[r0] = Some(triple.0);
+        self.reg.clear[r1] = Some(triple.1);
+        self.reg.clear[r2] = Some(triple.2);
         Ok(())
     }
 
@@ -173,7 +184,7 @@ impl VM {
         from: RegAddr,
         o_chan: &Sender<Action>,
     ) -> Result<(), SomeError> {
-        match self.register[from] {
+        match self.reg.clear[from] {
             None => Err(EvalError::OpenEmptyReg.into()),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
@@ -182,7 +193,7 @@ impl VM {
                 // wait for the response
                 // TODO parameterize these timeouts
                 let opened: Fp = r.recv_timeout(Duration::from_secs(1))?;
-                self.register[to] = Some(opened);
+                self.reg.clear[to] = Some(opened);
                 Ok(())
             }
         }
@@ -197,14 +208,14 @@ mod tests {
 
     const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
 
-    fn simple_vm_runner(instructions: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
+    fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_open_chan) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
-        vm_runner(instructions, reg, dummy_open_chan, dummy_triple_chan)
+        vm_runner(prog, reg, dummy_open_chan, dummy_triple_chan)
     }
 
     fn vm_runner(
-        instructions: Vec<Instruction>,
+        prog: Vec<Instruction>,
         reg: Reg,
         open_chan: Receiver<Fp>,
         triple_chan: Receiver<(Fp, Fp, Fp)>,
@@ -213,9 +224,9 @@ mod tests {
         let (s_action_chan, r_action_chan) = bounded(5);
 
         let handle = VM::spawn(0, reg, r_instruction_chan, s_action_chan);
-        for instruction in instructions {
+        for instruction in prog {
             s_instruction_chan.send(instruction)?;
-            if instruction == Instruction::STOP {
+            if instruction == Instruction::Stop {
                 break;
             }
             let reply = r_action_chan.recv_timeout(Duration::from_secs(1))?;
@@ -239,7 +250,7 @@ mod tests {
     where
         F: Fn(RegAddr, RegAddr, RegAddr) -> Instruction,
     {
-        let prog = vec![op(2, 1, 0), Instruction::OUTPUT(2), Instruction::STOP];
+        let prog = vec![op(2, 1, 0), Instruction::Output(2), Instruction::Stop];
         let reg = vec_to_reg(&vec![a, b]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
@@ -248,9 +259,9 @@ mod tests {
 
     fn compute_add_to_party(a: Fp, b: Fp, id: PartyID) -> Fp {
         let prog = vec![
-            Instruction::ADDP(2, 1, 0, id),
-            Instruction::OUTPUT(2),
-            Instruction::STOP,
+            Instruction::CAddTo(2, 1, 0, id),
+            Instruction::Output(2),
+            Instruction::Stop,
         ];
 
         let reg = vec_to_reg(&vec![a, b]);
@@ -261,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let op = |x, y, z| Instruction::ADD(x, y, z);
+        let op = |x, y, z| Instruction::CAdd(x, y, z);
         let one = Fp::one();
         assert_eq!(compute_op(one, one, op), one + one);
 
@@ -273,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_mul() {
-        let op = |x, y, z| Instruction::MUL(x, y, z);
+        let op = |x, y, z| Instruction::CMul(x, y, z);
         assert_eq!(compute_op(Fp::one(), Fp::zero(), op), Fp::zero());
 
         let rng = &mut XorShiftRng::from_seed(SEED);
@@ -284,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_sub() {
-        let op = |x, y, z| Instruction::SUB(x, y, z);
+        let op = |x, y, z| Instruction::CSub(x, y, z);
         assert_eq!(compute_op(Fp::one(), Fp::one(), op), Fp::zero());
 
         let rng = &mut XorShiftRng::from_seed(SEED);
@@ -303,9 +314,9 @@ mod tests {
     #[test]
     fn test_open() {
         let prog = vec![
-            Instruction::OPEN(0, 0),
-            Instruction::OUTPUT(0),
-            Instruction::STOP,
+            Instruction::Open(0, 0),
+            Instruction::Output(0),
+            Instruction::Stop,
         ];
         let reg = vec_to_reg(&vec![Fp::one()]);
 
@@ -320,11 +331,11 @@ mod tests {
     #[test]
     fn test_triple() {
         let prog = vec![
-            Instruction::TRIPLE(0, 1, 2),
-            Instruction::OUTPUT(0),
-            Instruction::OUTPUT(1),
-            Instruction::OUTPUT(2),
-            Instruction::STOP,
+            Instruction::Triple(0, 1, 2),
+            Instruction::Output(0),
+            Instruction::Output(1),
+            Instruction::Output(2),
+            Instruction::Stop,
         ];
 
         let (s, r) = bounded(5);

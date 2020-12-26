@@ -86,9 +86,9 @@ mod tests {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (_triple_sender, triple_receiver) = bounded(5);
         let prog = vec![
-            vm::Instruction::ADD(2, 1, 0),
-            vm::Instruction::OUTPUT(2),
-            vm::Instruction::STOP,
+            vm::Instruction::CAdd(2, 1, 0),
+            vm::Instruction::Output(2),
+            vm::Instruction::Stop,
         ];
 
         let one = Fp::one();
@@ -117,11 +117,11 @@ mod tests {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (triple_sender, triple_receiver) = bounded(5);
         let prog = vec![
-            vm::Instruction::TRIPLE(0, 1, 2),
-            vm::Instruction::OUTPUT(0),
-            vm::Instruction::OUTPUT(1),
-            vm::Instruction::OUTPUT(2),
-            vm::Instruction::STOP,
+            vm::Instruction::Triple(0, 1, 2),
+            vm::Instruction::Output(0),
+            vm::Instruction::Output(1),
+            vm::Instruction::Output(2),
+            vm::Instruction::Stop,
         ];
 
         let zero = Fp::zero();
@@ -169,7 +169,7 @@ mod tests {
         // check for the number of triples in prog and generate enough triples for it
         let triple_count = prog
             .iter()
-            .filter(|i| matches!(i, vm::Instruction::TRIPLE(_, _, _)))
+            .filter(|i| matches!(i, vm::Instruction::Triple(_, _, _)))
             .count();
         let triple_chans = create_triple_chans(n, triple_count);
 
@@ -221,9 +221,9 @@ mod tests {
     fn integration_test_open() {
         let n = 3;
         let prog = vec![
-            vm::Instruction::OPEN(0, 0),
-            vm::Instruction::OUTPUT(0),
-            vm::Instruction::STOP,
+            vm::Instruction::Open(0, 0),
+            vm::Instruction::Output(0),
+            vm::Instruction::Stop,
         ];
 
         let rng = &mut XorShiftRng::from_seed(SEED);
@@ -241,19 +241,19 @@ mod tests {
         // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
         let n = 3;
         let prog = vec![
-            vm::Instruction::TRIPLE(2, 3, 4),    // [a], [b], [c]
-            vm::Instruction::SUB(5, 0, 2),       // [e] <- [x] - [a]
-            vm::Instruction::SUB(6, 1, 3),       // [d] <- [y] - [b]
-            vm::Instruction::OPEN(5, 5),         // e <- open [e]
-            vm::Instruction::OPEN(6, 6),         // d <- open [d]
-            vm::Instruction::MUL(7, 5, 3),       // e * [b]
-            vm::Instruction::MUL(8, 6, 2),       // d * [a]
-            vm::Instruction::MUL(9, 5, 6),       // e*d
-            vm::Instruction::ADD(10, 4, 7),      // [c] + [e*b]
-            vm::Instruction::ADD(10, 10, 8),     //     + [d*a]
-            vm::Instruction::ADDP(10, 10, 9, 0), //     + e*d
-            vm::Instruction::OUTPUT(10),
-            vm::Instruction::STOP,
+            vm::Instruction::Triple(2, 3, 4),      // [a], [b], [c]
+            vm::Instruction::CSub(5, 0, 2),        // [e] <- [x] - [a]
+            vm::Instruction::CSub(6, 1, 3),        // [d] <- [y] - [b]
+            vm::Instruction::Open(5, 5),           // e <- open [e]
+            vm::Instruction::Open(6, 6),           // d <- open [d]
+            vm::Instruction::CMul(7, 5, 3),        // e * [b]
+            vm::Instruction::CMul(8, 6, 2),        // d * [a]
+            vm::Instruction::CMul(9, 5, 6),        // e*d
+            vm::Instruction::CAdd(10, 4, 7),       // [c] + [e*b]
+            vm::Instruction::CAdd(10, 10, 8),      //     + [d*a]
+            vm::Instruction::CAddTo(10, 10, 9, 0), //     + e*d
+            vm::Instruction::Output(10),
+            vm::Instruction::Stop,
         ];
 
         let rng = &mut XorShiftRng::from_seed(SEED);
