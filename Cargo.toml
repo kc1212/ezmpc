@@ -24,3 +24,4 @@ auto_ops = "0.1"
 [dev-dependencies]
 itertools = "0.9.0"
 test-env-log = "0.2"
+quickcheck_macros = "0.9"

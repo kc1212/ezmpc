@@ -304,38 +304,22 @@ mod tests {
         result[0]
     }
 
-    #[test]
-    fn test_c_add() {
+    #[quickcheck]
+    fn prop_clear_add(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CAdd(x, y, z);
-        let one = Fp::one();
-        assert_eq!(compute_clear_op(one, one, op), one + one);
-
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let a = rng.gen();
-        let b = rng.gen();
-        assert_eq!(compute_clear_op(a, b, op), a + b);
+        compute_clear_op(x, y, op) == x + y
     }
 
-    #[test]
-    fn test_c_mul() {
+    #[quickcheck]
+    fn prop_clear_mul(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CMul(x, y, z);
-        assert_eq!(compute_clear_op(Fp::one(), Fp::zero(), op), Fp::zero());
-
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let a = rng.gen();
-        let b = rng.gen();
-        assert_eq!(compute_clear_op(a, b, op), a * b);
+        compute_clear_op(x, y, op) == x * y
     }
 
-    #[test]
-    fn test_c_sub() {
+    #[quickcheck]
+    fn prop_clear_sub(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CSub(x, y, z);
-        assert_eq!(compute_clear_op(Fp::one(), Fp::one(), op), Fp::zero());
-
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let a = rng.gen();
-        let b = rng.gen();
-        assert_eq!(compute_clear_op(a, b, op), b - a);
+        compute_clear_op(x, y, op) == y - x
     }
 
     #[test]
@@ -345,58 +329,36 @@ mod tests {
         assert_eq!(compute_add_to_party(one, one, 1), one);
     }
 
-    #[test]
-    fn test_s_add() {
+    #[quickcheck]
+    fn prop_secret_add(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::SAdd(x, y, z);
-        let one = Fp::one();
-        assert_eq!(compute_secret_op(one, one, op), one + one);
-
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let a = rng.gen();
-        let b = rng.gen();
-        assert_eq!(compute_secret_op(a, b, op), a + b);
+        compute_secret_op(x, y, op) == x + y
     }
 
-    #[test]
-    fn test_s_sub() {
+    #[quickcheck]
+    fn prop_secret_sub(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::SSub(x, y, z);
-        let one = Fp::one();
-        assert_eq!(compute_secret_op(one, one, op), one - one);
-
-        let rng = &mut XorShiftRng::from_seed(SEED);
-        let a = rng.gen();
-        let b = rng.gen();
-        assert_eq!(compute_secret_op(a, b, op), b - a);
+        compute_secret_op(x, y, op) == y - x
     }
 
-    #[test]
-    fn test_m_add() {
-        let s1 = Fp::one();
-        let c2 = Fp::one();
+    #[quickcheck]
+    fn prop_mixed_add(s1: Fp, c2: Fp, id: PartyID) -> bool {
         let mut reg = vec_to_secret_reg(&vec![s1]);
         reg.clear[0] = Some(c2);
-        {
-            // use id = 0
-            let prog = vec![Instruction::MAdd(1, 0, 0, 0), Instruction::SOutput(1), Instruction::Stop];
 
-            let result = simple_vm_runner(prog, reg).unwrap();
-            assert_eq!(result.len(), 1);
-            assert_eq!(result[0], s1 + c2);
-        }
-        {
-            // use id = 1
-            let prog = vec![Instruction::MAdd(1, 0, 0, 1), Instruction::SOutput(1), Instruction::Stop];
-
-            let result = simple_vm_runner(prog, reg).unwrap();
-            assert_eq!(result.len(), 1);
-            assert_eq!(result[0], s1); // shouldn't be added
+        // use id = 0
+        let prog = vec![Instruction::MAdd(1, 0, 0, id), Instruction::SOutput(1), Instruction::Stop];
+        let result = simple_vm_runner(prog, reg).unwrap();
+        assert_eq!(result.len(), 1);
+        if id == 0 {
+            result[0] == s1 + c2
+        } else {
+            result[0] == s1
         }
     }
 
-    #[test]
-    fn test_m_mul() {
-        let s1 = Fp::one();
-        let c2 = Fp::one() + Fp::one();
+    #[quickcheck]
+    fn prop_mixed_mul(s1: Fp, c2: Fp) -> bool {
         let mut reg = vec_to_secret_reg(&vec![s1]);
         reg.clear[0] = Some(c2);
 
@@ -404,7 +366,7 @@ mod tests {
 
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], s1 * c2);
+        result[0] == s1 * c2
     }
 
     #[test]

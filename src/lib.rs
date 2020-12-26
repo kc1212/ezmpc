@@ -20,6 +20,9 @@ extern crate num_traits;
 #[cfg(test)]
 extern crate itertools;
 #[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
+#[cfg(test)]
 extern crate test_env_log;
 
 #[cfg(test)]
@@ -63,10 +66,7 @@ mod tests {
         output
     }
 
-    fn create_triple_chans(
-        n: usize,
-        capacity: usize,
-    ) -> Vec<(Sender<(Fp, Fp, Fp)>, Receiver<(Fp, Fp, Fp)>)> {
+    fn create_triple_chans(n: usize, capacity: usize) -> Vec<(Sender<(Fp, Fp, Fp)>, Receiver<(Fp, Fp, Fp)>)> {
         (0..n).map(|_| bounded(capacity)).collect()
     }
 
@@ -86,11 +86,7 @@ mod tests {
     fn integration_test_sync() {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (_triple_sender, triple_receiver) = bounded(5);
-        let prog = vec![
-            vm::Instruction::CAdd(2, 1, 0),
-            vm::Instruction::COutput(2),
-            vm::Instruction::Stop,
-        ];
+        let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
 
         let one = Fp::one();
         let two = one + one;
@@ -157,21 +153,12 @@ mod tests {
             .collect()
     }
 
-    fn generic_integration_test(
-        n: usize,
-        prog: Vec<vm::Instruction>,
-        regs: Vec<vm::Reg>,
-        expected: Vec<Fp>,
-        rng: &mut impl Rng,
-    ) {
+    fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::Reg>, expected: Vec<Fp>, rng: &mut impl Rng) {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(n);
         let node_chans = create_node_chans(n);
 
         // check for the number of triples in prog and generate enough triples for it
-        let triple_count = prog
-            .iter()
-            .filter(|i| matches!(i, vm::Instruction::Triple(_, _, _)))
-            .count();
+        let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
         let triple_chans = create_triple_chans(n, triple_count);
 
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
@@ -182,14 +169,8 @@ mod tests {
                     sync_chans_for_node.0[i].clone(),
                     sync_chans_for_node.1[i].clone(),
                     triple_chans[i].1.clone(),
-                    get_row(&node_chans, i)
-                        .into_iter()
-                        .map(|(s, _)| s)
-                        .collect(),
-                    get_col(&node_chans, i)
-                        .into_iter()
-                        .map(|(_, r)| r)
-                        .collect(),
+                    get_row(&node_chans, i).into_iter().map(|(s, _)| s).collect(),
+                    get_col(&node_chans, i).into_iter().map(|(_, r)| r).collect(),
                     prog.clone(),
                     regs[i],
                 );
@@ -210,10 +191,7 @@ mod tests {
         }
         assert_eq!(
             expected,
-            transpose(&output_shares)
-                .iter()
-                .map(|shares| unauth_combine(shares))
-                .collect::<Vec<Fp>>()
+            transpose(&output_shares).iter().map(|shares| unauth_combine(shares)).collect::<Vec<Fp>>()
         );
         assert_eq!((), sync_handle.join().unwrap().unwrap());
     }
@@ -221,18 +199,11 @@ mod tests {
     #[test]
     fn integration_test_open() {
         let n = 3;
-        let prog = vec![
-            vm::Instruction::Open(0, 0),
-            vm::Instruction::COutput(0),
-            vm::Instruction::Stop,
-        ];
+        let prog = vec![vm::Instruction::Open(0, 0), vm::Instruction::COutput(0), vm::Instruction::Stop];
 
         let rng = &mut XorShiftRng::from_seed(SEED);
         let zero = Fp::zero();
-        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&zero, n, rng)])
-            .iter()
-            .map(|v| vec_to_reg(v))
-            .collect();
+        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&zero, n, rng)]).iter().map(|v| vec_to_reg(v)).collect();
 
         generic_integration_test(n, prog, regs, vec![zero], rng);
     }
@@ -262,11 +233,10 @@ mod tests {
         let y: Fp = rng.gen();
         let expected = x * y;
 
-        let regs: Vec<vm::Reg> =
-            transpose(&vec![unauth_share(&x, n, rng), unauth_share(&y, n, rng)])
-                .iter()
-                .map(|v| vec_to_reg(v))
-                .collect();
+        let regs: Vec<vm::Reg> = transpose(&vec![unauth_share(&x, n, rng), unauth_share(&y, n, rng)])
+            .iter()
+            .map(|v| vec_to_reg(v))
+            .collect();
 
         generic_integration_test(n, prog, regs, vec![expected], rng);
     }
