@@ -107,6 +107,25 @@ pub fn fake_auth_triple(n: usize, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<Au
     auth_triple(n, &Fp::zero(), rng)
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct CommitmentScheme {
+    g: Fp,
+    h: Fp,
+}
+
+impl CommitmentScheme {
+    pub fn commit(&self, secret: &Fp, rng: &mut impl Rng) -> (Fp, Fp) {
+        let r: Fp = rng.gen();
+        (self.g * secret + self.h * r, r)
+    }
+
+    pub fn verify(&self, secret: &Fp, commit: &(Fp, Fp)) -> bool {
+        let c = commit.0;
+        let r = commit.1;
+        c == (self.g * secret) + (self.h * r)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,5 +330,16 @@ mod tests {
             let alpha: Fp = rng.gen();
             auth_triple_protocol(x, y, n, &alpha, rng);
         }
+    }
+
+    #[quickcheck]
+    fn prop_pedersen_commitment(secret: Fp) -> bool {
+        let rng = &mut XorShiftRng::from_seed(SEED);
+        let g: Fp = rng.gen();
+        let h: Fp = rng.gen();
+
+        let scheme = CommitmentScheme { g, h };
+        let commitment = scheme.commit(&secret, rng);
+        scheme.verify(&secret, &commitment)
     }
 }

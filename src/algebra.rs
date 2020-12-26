@@ -2,7 +2,7 @@ use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedI
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::*;
-use num_traits::{One, Zero};
+use num_traits::{One, Pow, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
@@ -110,9 +110,7 @@ impl_op_ex!(+|a: &Fp, b:  &Fp| -> Fp {
     AbstractMagma::<Additive>::operate(a, b)
 });
 
-impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp {
-    AbstractMagma::<Additive>::operate(a, &TwoSidedInverse::<Additive>::two_sided_inverse(&b))
-});
+impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { AbstractMagma::<Additive>::operate(a, &TwoSidedInverse::<Additive>::two_sided_inverse(&b)) });
 
 impl AddAssign<Fp> for Fp {
     fn add_assign(&mut self, rhs: Fp) {
@@ -165,6 +163,30 @@ impl MulAssign<Fp> for Fp {
 impl DivAssign<Fp> for Fp {
     fn div_assign(&mut self, rhs: Fp) {
         self.0 = (*self / rhs).0
+    }
+}
+
+impl Pow<Fp> for Fp {
+    type Output = Fp;
+
+    fn pow(self, rhs: Fp) -> Self::Output {
+        if P == 1 {
+            return Fp(0);
+        }
+
+        let mut base = self.0;
+        let mut result = 1u128;
+        let mut exp = rhs.0;
+
+        base = base % P;
+        while exp > 0 {
+            if exp % 2 == 1 {
+                result = result * base % P;
+            }
+            exp = exp >> 1;
+            base = base * base % P
+        }
+        Fp(result)
     }
 }
 
