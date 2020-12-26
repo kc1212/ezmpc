@@ -7,6 +7,7 @@ pub mod node;
 pub mod synchronizer;
 pub mod vm;
 
+extern crate auto_ops;
 extern crate crossbeam_channel;
 extern crate log;
 extern crate quick_error;

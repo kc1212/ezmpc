@@ -1,7 +1,7 @@
 use crate::algebra::Fp;
+use auto_ops::*;
 use num_traits::Zero;
 use rand::Rng;
-use std::ops::{Add, Sub};
 
 #[derive(Copy, Clone, Debug)]
 pub struct AuthShare {
@@ -27,45 +27,19 @@ impl AuthShare {
     }
 }
 
-impl Add for AuthShare {
-    type Output = AuthShare;
-    fn add(self, rhs: Self) -> Self::Output {
-        AuthShare {
-            share: self.share + rhs.share,
-            mac: self.mac + rhs.mac,
-        }
+impl_op_ex!(+|a: &AuthShare, b: &AuthShare| -> AuthShare {
+    AuthShare {
+        share: a.share + b.share,
+        mac: a.mac + b.mac,
     }
-}
+});
 
-impl Add for &AuthShare {
-    type Output = AuthShare;
-    fn add(self, rhs: Self) -> Self::Output {
-        AuthShare {
-            share: self.share + rhs.share,
-            mac: self.mac + rhs.mac,
-        }
+impl_op_ex!(-|a: &AuthShare, b: &AuthShare| -> AuthShare {
+    AuthShare {
+        share: a.share - b.share,
+        mac: a.mac - b.mac,
     }
-}
-
-impl Sub for AuthShare {
-    type Output = AuthShare;
-    fn sub(self, rhs: Self) -> Self::Output {
-        AuthShare {
-            share: self.share - rhs.share,
-            mac: self.mac - rhs.mac,
-        }
-    }
-}
-
-impl Sub for &AuthShare {
-    type Output = AuthShare;
-    fn sub(self, rhs: Self) -> Self::Output {
-        AuthShare {
-            share: self.share - rhs.share,
-            mac: self.mac - rhs.mac,
-        }
-    }
-}
+});
 
 #[derive(Copy, Clone, Debug)]
 pub struct AuthRand {
@@ -163,17 +137,17 @@ mod tests {
         let secret2: Fp = rng.gen();
         let shares2 = unauth_share(&secret2, n, rng);
 
-        let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| *x + *y).collect();
+        let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| x + y).collect();
         assert_eq!(secret + secret2, unauth_combine(&new_shares));
 
         let const_term: Fp = rng.gen();
         assert_eq!(
             secret * const_term,
-            unauth_combine(&shares.iter().map(|s| *s * const_term).collect())
+            unauth_combine(&shares.iter().map(|s| s * const_term).collect())
         );
         assert_eq!(
             secret2 * const_term,
-            unauth_combine(&shares2.iter().map(|s| *s * const_term).collect())
+            unauth_combine(&shares2.iter().map(|s| s * const_term).collect())
         );
     }
 
@@ -192,12 +166,12 @@ mod tests {
         let e_boxes: Vec<Fp> = x_boxes
             .into_iter()
             .zip(&a_boxes)
-            .map(|(x, a)| x - *a)
+            .map(|(x, a)| x - a)
             .collect();
         let d_boxes: Vec<Fp> = y_boxes
             .into_iter()
             .zip(&b_boxes)
-            .map(|(y, b)| y - *b)
+            .map(|(y, b)| y - b)
             .collect();
 
         let e = unauth_combine(&e_boxes);
@@ -243,7 +217,7 @@ mod tests {
         let ds: Vec<_> = alpha_shares
             .into_iter()
             .zip(shares)
-            .map(|(a, share)| *a * x - share.mac)
+            .map(|(a, share)| a * x - share.mac)
             .collect();
         let d = unauth_combine(&ds);
         (Fp::zero() == d, x)
@@ -337,7 +311,7 @@ mod tests {
             .map(|(i, alpha_share, c_box, b_box, a_box)| {
                 let eb_box = b_box.mul_const(&e);
                 let da_box = a_box.mul_const(&d);
-                (c_box + &eb_box + da_box).add_const(&ed, alpha_share, i == 0)
+                (c_box + eb_box + da_box).add_const(&ed, alpha_share, i == 0)
             })
             .collect();
 

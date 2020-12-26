@@ -1,10 +1,11 @@
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
+use auto_ops::*;
 use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
 
 type FpRepr = u128;
 const P: FpRepr = 18446744073709551557;
@@ -61,7 +62,7 @@ impl TwoSidedInverse<Additive> for Fp {
 }
 
 /// taken from https://github.com/rust-num/num-integer/blob/19ab37c59d038e05f34d7817dd3ddd2c490d982c/src/lib.rs#L165
-fn egcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
+fn xgcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
     let mut s: (FpRepr, FpRepr) = (0, 1);
     let mut t: (FpRepr, FpRepr) = (1, 0);
     let mut r = (b.0, a.0);
@@ -84,7 +85,7 @@ fn egcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
 
 impl TwoSidedInverse<Multiplicative> for Fp {
     fn two_sided_inverse(&self) -> Self {
-        let (gcd, x, _) = egcd(*self, Fp(P));
+        let (gcd, x, _) = xgcd(*self, Fp(P));
         if gcd == One::one() {
             x
         } else {
@@ -105,34 +106,23 @@ impl Identity<Multiplicative> for Fp {
     }
 }
 
-impl Add<Fp> for Fp {
-    type Output = Fp;
+impl_op_ex!(+|a: &Fp, b:  &Fp| -> Fp {
+    AbstractMagma::<Additive>::operate(a, b)
+});
 
-    fn add(self, rhs: Fp) -> Fp {
-        AbstractMagma::<Additive>::operate(&self, &rhs)
-    }
-}
-
-impl Sub<Fp> for Fp {
-    type Output = Fp;
-
-    fn sub(self, rhs: Fp) -> Fp {
-        AbstractMagma::<Additive>::operate(
-            &self,
-            &TwoSidedInverse::<Additive>::two_sided_inverse(&rhs),
-        )
-    }
-}
+impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp {
+    AbstractMagma::<Additive>::operate(a, &TwoSidedInverse::<Additive>::two_sided_inverse(&b))
+});
 
 impl AddAssign<Fp> for Fp {
     fn add_assign(&mut self, rhs: Fp) {
-        self.0 = self.add(rhs).0;
+        self.0 = (*self + rhs).0;
     }
 }
 
 impl SubAssign<Fp> for Fp {
     fn sub_assign(&mut self, rhs: Fp) {
-        self.0 = self.sub(rhs).0;
+        self.0 = (*self - rhs).0
     }
 }
 
@@ -160,31 +150,21 @@ impl One for Fp {
     }
 }
 
-impl Mul<Fp> for Fp {
-    type Output = Fp;
+impl_op_ex!(*|a: &Fp, b: &Fp| -> Fp { AbstractMagma::<Multiplicative>::operate(a, b) });
 
-    fn mul(self, rhs: Fp) -> Fp {
-        AbstractMagma::<Multiplicative>::operate(&self, &rhs)
-    }
-}
-
-impl Div<Fp> for Fp {
-    type Output = Fp;
-
-    fn div(self, rhs: Fp) -> Fp {
-        self.mul(TwoSidedInverse::<Multiplicative>::two_sided_inverse(&rhs))
-    }
-}
+impl_op_ex!(/|a: &Fp, b: &Fp| -> Fp {
+    a * TwoSidedInverse::<Multiplicative>::two_sided_inverse(b)
+});
 
 impl MulAssign<Fp> for Fp {
     fn mul_assign(&mut self, rhs: Fp) {
-        self.0 = self.mul(rhs).0
+        self.0 = (*self * rhs).0
     }
 }
 
 impl DivAssign<Fp> for Fp {
     fn div_assign(&mut self, rhs: Fp) {
-        self.0 = self.div(rhs).0
+        self.0 = (*self / rhs).0
     }
 }
 
