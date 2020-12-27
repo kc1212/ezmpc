@@ -22,11 +22,30 @@ impl fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
+#[derive(Debug)]
+pub enum OutputError {
+    RegisterEmpty,
+    BadCommitment,
+    SumIsNotZero,
+}
+
+impl fmt::Display for OutputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "output failed with error {:?}", self)
+    }
+}
+
+impl std::error::Error for OutputError {}
+
 quick_error! {
     #[derive(Debug)]
     pub enum SomeError {
         EvalError(err: EvalError) {
             display("evaluation error: {}", err)
+            from()
+        }
+        OutputError(err: OutputError) {
+            display("output error: {}", err)
             from()
         }
         JoinError(err: Box<dyn std::any::Any + Send>) {
@@ -49,6 +68,10 @@ quick_error! {
             display("send SyncMsgReply error: {}", err)
             from()
         }
+        SendErrorNodeMsg(err: crossbeam_channel::SendError<message::NodeMsg>) {
+            display("send NodeMsg error: {}", err)
+            from()
+        }
         SendErrorAction(err: crossbeam_channel::SendError<vm::Action>) {
             display("send Action error: {}", err)
             from()
@@ -63,6 +86,10 @@ quick_error! {
         }
         SendErrorFp(err: crossbeam_channel::SendError<Fp>) {
             display("send Fp error: {}", err)
+            from()
+        }
+        SendErrorOutputResult(err: crossbeam_channel::SendError<Result<(), OutputError>>) {
+            display("send output verification result error: {}", err)
             from()
         }
     }

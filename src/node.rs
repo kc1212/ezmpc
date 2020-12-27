@@ -1,12 +1,13 @@
 use crate::algebra::Fp;
-use crate::error::SomeError;
+use crate::crypto::{AuthShare, Commitment, CommitmentScheme};
+use crate::error::{OutputError, SomeError};
 use crate::message::*;
 use crate::vm;
 
-use crate::crypto::AuthShare;
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::debug;
 use num_traits::Zero;
+use rand::{SeedableRng, StdRng};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -15,22 +16,24 @@ pub struct Node {
     s_sync_chan: Sender<SyncMsgReply>,
     r_sync_chan: Receiver<SyncMsg>,
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
-    s_node_chan: Vec<Sender<Fp>>,
-    r_node_chan: Vec<Receiver<Fp>>,
-    instructions: Vec<vm::Instruction>,
+    s_node_chan: Vec<Sender<NodeMsg>>,
+    r_node_chan: Vec<Receiver<NodeMsg>>,
+    com_scheme: CommitmentScheme,
 }
 
 impl Node {
     pub fn spawn(
         id: vm::PartyID,
         alpha_share: Fp,
+        reg: vm::Reg,
+        instructions: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncMsgReply>,
         r_sync_chan: Receiver<SyncMsg>,
         triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
-        s_node_chan: Vec<Sender<Fp>>,
-        r_node_chan: Vec<Receiver<Fp>>,
-        instructions: Vec<vm::Instruction>,
-        reg: vm::Reg,
+        s_node_chan: Vec<Sender<NodeMsg>>,
+        r_node_chan: Vec<Receiver<NodeMsg>>,
+        com_scheme: CommitmentScheme,
+        rng_seed: [usize; 4],
     ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
             let mut s = Node {
@@ -39,13 +42,22 @@ impl Node {
                 triple_chan,
                 s_node_chan,
                 r_node_chan,
-                instructions,
+                com_scheme,
             };
-            s.listen(id, alpha_share, reg)
+            s.listen(id, alpha_share, reg, instructions, rng_seed)
         })
     }
 
-    fn listen(&mut self, id: vm::PartyID, alpha_share: Fp, reg: vm::Reg) -> Result<Vec<Fp>, SomeError> {
+    fn listen(
+        &mut self,
+        id: vm::PartyID,
+        alpha_share: Fp,
+        reg: vm::Reg,
+        prog: Vec<vm::Instruction>,
+        rng_seed: [usize; 4],
+    ) -> Result<Vec<Fp>, SomeError> {
+        let rng = &mut StdRng::from_seed(&rng_seed);
+
         // wait for start
         loop {
             let msg = self.r_sync_chan.recv()?;
@@ -61,8 +73,25 @@ impl Node {
         let (s_inst_chan, r_inst_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
         let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inst_chan, s_action_chan);
-        let mut instruction_counter = 0;
+        let mut pc = 0;
         let mut triples = Vec::new();
+
+        let unwrap_elem_msg = |msg: &NodeMsg| -> Fp {
+            match msg {
+                NodeMsg::Elem(x) => *x,
+                NodeMsg::Com(_) => panic!("expected an element message"),
+            }
+        };
+
+        let unwrap_com_msg = |msg: &NodeMsg| -> Commitment {
+            match msg {
+                NodeMsg::Elem(_) => panic!("expected a com message"),
+                NodeMsg::Com(c) => *c,
+            }
+        };
+
+        let bcast = |m| broadcast(&self.s_node_chan, m);
+        let recv = || recv_all(&self.r_node_chan);
 
         // process instructions
         loop {
@@ -78,15 +107,15 @@ impl Node {
                     match msg {
                         SyncMsg::Start => panic!("node already started"),
                         SyncMsg::Next => {
-                            if instruction_counter >= self.instructions.len() {
+                            if pc >= prog.len() {
                                 panic!("instruction counter overflow");
                             }
-                            let inst = self.instructions[instruction_counter];
-                            instruction_counter += 1;
-                            debug!("Sending instruction {:?} to VM", inst);
-                            s_inst_chan.send(inst)?;
+                            let instruction = prog[pc];
+                            pc += 1;
+                            debug!("Sending instruction {:?} to VM", instruction);
+                            s_inst_chan.send(instruction)?;
 
-                            if inst == vm::Instruction::Stop {
+                            if instruction == vm::Instruction::Stop {
                                 self.s_sync_chan.send(SyncMsgReply::Done)?;
                                 break;
                             } else {
@@ -95,12 +124,8 @@ impl Node {
                                 match action {
                                     vm::Action::None => (),
                                     vm::Action::Open(x, sender) => {
-                                        broadcast(&self.s_node_chan, x)?;
-                                        let replies = recv_all(&self.r_node_chan)?;
-                                        let mut result = Fp::zero();
-                                        for reply in replies {
-                                            result += reply;
-                                        }
+                                        bcast(NodeMsg::Elem(x))?;
+                                        let result = recv()?.iter().map(unwrap_elem_msg).sum();
                                         sender.send(result)?
                                     }
                                     vm::Action::Triple(sender) => {
@@ -109,6 +134,32 @@ impl Node {
                                             None => self.triple_chan.recv_timeout(Duration::from_secs(1))?,
                                         };
                                         sender.send(triple)?
+                                    }
+                                    vm::Action::SOutput(share, sender) => {
+                                        // open x
+                                        bcast(NodeMsg::Elem(share.share))?;
+                                        let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
+                                        // let d = alpha_i * x - mac_i
+                                        let d = alpha_share * x - share.mac;
+                                        // commit d
+                                        let d_com = self.com_scheme.commit(&d, rng);
+                                        bcast(NodeMsg::Com(d_com))?;
+                                        // get commitment from others
+                                        let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
+                                        // commit-open d and collect them
+                                        bcast(NodeMsg::Elem(d))?;
+                                        let ds: Vec<_> = recv()?.iter().map(unwrap_elem_msg).collect();
+                                        // verify all the commitments of d
+                                        // and check they sum to 0
+                                        let coms_ok = ds.iter().zip(d_coms).map(|(d, com)| self.com_scheme.verify(&d, &com)).all(|x| x);
+                                        let zero_ok = ds.into_iter().sum::<Fp>() == Fp::zero();
+                                        if !coms_ok {
+                                            sender.send(Err(OutputError::BadCommitment))?;
+                                        } else if !zero_ok {
+                                            sender.send(Err(OutputError::SumIsNotZero))?;
+                                        } else {
+                                            sender.send(Ok(()))?;
+                                        }
                                     }
                                 }
                                 self.s_sync_chan.send(SyncMsgReply::Ok)?;

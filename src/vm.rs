@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
-use crate::error::{EvalError, SomeError};
+use crate::error::{EvalError, OutputError, SomeError};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::min;
@@ -53,6 +53,7 @@ pub enum Action {
     None,
     Open(Fp, Sender<Fp>),
     Triple(Sender<(AuthShare, AuthShare, AuthShare)>),
+    SOutput(AuthShare, Sender<Result<(), OutputError>>),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -119,8 +120,8 @@ impl VM {
                     s_chan.send(Action::None)?
                 }
                 Instruction::SOutput(reg) => {
-                    output.push(wrap_option(self.reg.secret[reg], EvalError::OutputEmptyReg)?.share);
-                    s_chan.send(Action::None)?
+                    let result = self.process_secret_output(reg, &s_chan)?;
+                    output.push(result);
                 }
                 Instruction::Stop => return Ok(output),
             }
@@ -209,7 +210,6 @@ impl VM {
             None => Err(EvalError::OpenEmptyReg.into()),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
-                // TODO implement the proper open protocol
                 s_chan.send(Action::Open(for_opening.share, s))?;
 
                 // wait for the response
@@ -219,6 +219,19 @@ impl VM {
                 Ok(())
             }
         }
+    }
+
+    fn process_secret_output(&mut self, reg: RegAddr, s_chan: &Sender<Action>) -> Result<Fp, SomeError> {
+        let share = match self.reg.secret[reg] {
+            None => Err(OutputError::RegisterEmpty),
+            Some(x) => Ok(x),
+        }?;
+        let (s, r) = bounded(5);
+        s_chan.send(Action::SOutput(share, s))?;
+
+        // wait for response
+        r.recv_timeout(Duration::from_secs(1))??;
+        Ok(share.share)
     }
 }
 
@@ -260,6 +273,7 @@ mod tests {
                     let triple = triple_chan.recv_timeout(Duration::from_secs(1))?;
                     sender.send(triple)?
                 }
+                Action::SOutput(_, sender) => sender.send(Ok(()))?,
             }
         }
 

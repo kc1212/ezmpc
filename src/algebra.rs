@@ -204,6 +204,16 @@ impl Rand for Fp {
     }
 }
 
+impl std::iter::Sum for Fp {
+    fn sum<I: Iterator<Item = Fp>>(iter: I) -> Self {
+        let mut out = Zero::zero();
+        for x in iter {
+            out += x;
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

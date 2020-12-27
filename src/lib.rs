@@ -29,7 +29,7 @@ extern crate test_env_log;
 mod tests {
     use crossbeam_channel::{bounded, Receiver, Sender};
     use num_traits::{One, Zero};
-    use rand::{Rng, SeedableRng, XorShiftRng};
+    use rand::{Rng, SeedableRng, StdRng};
     use std::thread::JoinHandle;
     use test_env_log::test;
 
@@ -40,7 +40,7 @@ mod tests {
     use crate::synchronizer::Synchronizer;
     use crate::vm;
 
-    const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
+    const TEST_RNG_SEED: [usize; 4] = [0x0, 0x0, 0x0, 0x0];
 
     fn create_sync_chans(
         n: usize,
@@ -53,7 +53,7 @@ mod tests {
         ((from_sync, to_sync), (from_node, to_node))
     }
 
-    fn create_node_chans(n: usize) -> Vec<Vec<(Sender<Fp>, Receiver<Fp>)>> {
+    fn create_node_chans(n: usize) -> Vec<Vec<(Sender<NodeMsg>, Receiver<NodeMsg>)>> {
         let mut output = Vec::new();
         for _ in 0..n {
             let mut row = Vec::new();
@@ -98,13 +98,15 @@ mod tests {
         let node_handle = Node::spawn(
             0,
             fake_alpha_share,
+            vm::vec_to_reg(&vec![one, one], &vec![]),
+            prog,
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
             vec![],
             vec![],
-            prog,
-            vm::vec_to_reg(&vec![one, one], &vec![]),
+            CommitmentScheme::new(),
+            TEST_RNG_SEED,
         );
 
         let answer = node_handle.join().unwrap().unwrap();
@@ -141,13 +143,15 @@ mod tests {
         let node_handle = Node::spawn(
             0,
             fake_alpha_share,
+            vm::empty_reg(),
+            prog,
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
             vec![],
             vec![],
-            prog,
-            vm::empty_reg(),
+            CommitmentScheme::new(),
+            TEST_RNG_SEED,
         );
 
         let answer = node_handle.join().unwrap().unwrap();
@@ -173,42 +177,33 @@ mod tests {
         let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
         let triple_chans = create_triple_chans(n, triple_count);
 
-        let fake_alpha_share = Fp::zero();
+        let alpha: Fp = rng.gen();
+        let alpha_shares = unauth_share(&alpha, n, rng);
+
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handles: Vec<JoinHandle<_>> = (0..n)
             .map(|i| {
                 let node_handle = Node::spawn(
                     i,
-                    fake_alpha_share,
+                    alpha_shares[i],
+                    regs[i],
+                    prog.clone(),
                     sync_chans_for_node.0[i].clone(),
                     sync_chans_for_node.1[i].clone(),
                     triple_chans[i].1.clone(),
                     get_row(&node_chans, i).into_iter().map(|(s, _)| s).collect(),
                     get_col(&node_chans, i).into_iter().map(|(_, r)| r).collect(),
-                    prog.clone(),
-                    regs[i],
+                    CommitmentScheme::new(),
+                    TEST_RNG_SEED,
                 );
                 node_handle
             })
             .collect();
 
         for _ in 0..triple_count {
-            // TODO authenticate the triples properly
-            let triple = unauth_triple(n, rng);
+            let triple = auth_triple(n, &alpha, rng);
             for (i, (s, _)) in triple_chans.iter().enumerate() {
-                let triple0 = AuthShare {
-                    share: triple.0[i],
-                    mac: Fp::zero(),
-                };
-                let triple1 = AuthShare {
-                    share: triple.1[i],
-                    mac: Fp::zero(),
-                };
-                let triple2 = AuthShare {
-                    share: triple.2[i],
-                    mac: Fp::zero(),
-                };
-                s.send((triple0, triple1, triple2)).unwrap();
+                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
             }
         }
 
@@ -228,7 +223,7 @@ mod tests {
         let n = 3;
         let prog = vec![vm::Instruction::Open(1, 0), vm::Instruction::COutput(1), vm::Instruction::Stop];
 
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&TEST_RNG_SEED);
         let zero = Fp::zero();
         let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&zero, n, rng)])
             .iter()
@@ -258,7 +253,7 @@ mod tests {
             vm::Instruction::Stop,
         ];
 
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&TEST_RNG_SEED);
         let x: Fp = rng.gen();
         let y: Fp = rng.gen();
         let expected = x * y;

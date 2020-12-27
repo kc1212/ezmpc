@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
 use auto_ops::*;
-use num_traits::Zero;
+use num_traits::{One, Zero};
 use rand::Rng;
 
 #[derive(Copy, Clone, Debug)]
@@ -107,22 +107,36 @@ pub fn fake_auth_triple(n: usize, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<Au
     auth_triple(n, &Fp::zero(), rng)
 }
 
+// TODO wrong/insecure
 #[derive(Copy, Clone, Debug)]
 pub struct CommitmentScheme {
     g: Fp,
     h: Fp,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct Commitment {
+    c: Fp,
+    r: Fp,
+}
+
 impl CommitmentScheme {
-    pub fn commit(&self, secret: &Fp, rng: &mut impl Rng) -> (Fp, Fp) {
+    pub fn new() -> CommitmentScheme {
+        CommitmentScheme {
+            g: Fp::one() + Fp::one(),
+            h: Fp::one() + Fp::one() + Fp::one(),
+        }
+    }
+    pub fn commit(&self, secret: &Fp, rng: &mut impl Rng) -> Commitment {
         let r: Fp = rng.gen();
-        (self.g * secret + self.h * r, r)
+        Commitment {
+            c: self.g * secret + self.h * r,
+            r,
+        }
     }
 
-    pub fn verify(&self, secret: &Fp, commit: &(Fp, Fp)) -> bool {
-        let c = commit.0;
-        let r = commit.1;
-        c == (self.g * secret) + (self.h * r)
+    pub fn verify(&self, secret: &Fp, com: &Commitment) -> bool {
+        com.c == (self.g * secret) + (self.h * com.r)
     }
 }
 
@@ -131,13 +145,13 @@ mod tests {
     use super::*;
     use itertools::izip;
     use num_traits::{One, Zero};
-    use rand::{Rng, SeedableRng, XorShiftRng};
+    use rand::{Rng, SeedableRng, StdRng};
 
-    const SEED: [u32; 4] = [0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654];
+    const SEED: [usize; 4] = [0, 1, 2, 3];
 
     #[test]
     fn test_fp_rand() {
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         let a: Fp = rng.gen();
         let b: Fp = rng.gen();
         assert_ne!(a, b);
@@ -146,7 +160,7 @@ mod tests {
     #[test]
     fn test_unauth_sharing() {
         let n = 4;
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         let secret: Fp = rng.gen();
         let shares = unauth_share(&secret, n, rng);
         let recovered = unauth_combine(&shares);
@@ -199,7 +213,7 @@ mod tests {
     #[test]
     fn test_unauth_triple() {
         let n = 4;
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         {
             let x: Fp = Fp::one();
             let y: Fp = Fp::one() + Fp::one();
@@ -229,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_auth_arithmetic() {
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         let n = 4;
         let alpha: Fp = rng.gen();
         let alpha_shares = unauth_share(&alpha, n, rng);
@@ -263,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_auth_share() {
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         let n = 4;
         let secret: Fp = rng.gen();
         let alpha: Fp = rng.gen();
@@ -317,7 +331,7 @@ mod tests {
     #[test]
     fn test_auth_triple() {
         let n = 4;
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         {
             let x: Fp = Fp::one();
             let y: Fp = Fp::one() + Fp::one();
@@ -334,7 +348,7 @@ mod tests {
 
     #[quickcheck]
     fn prop_pedersen_commitment(secret: Fp) -> bool {
-        let rng = &mut XorShiftRng::from_seed(SEED);
+        let rng = &mut StdRng::from_seed(&SEED);
         let g: Fp = rng.gen();
         let h: Fp = rng.gen();
 
