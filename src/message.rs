@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
 
-use crate::crypto::Commitment;
+use crate::crypto::commit;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::fmt::Debug;
@@ -41,5 +41,6 @@ pub enum SyncMsgReply {
 #[derive(Copy, Clone, Debug)]
 pub enum NodeMsg {
     Elem(Fp),
-    Com(Commitment),
+    Com(commit::Commitment),
+    Opening(commit::Opening),
 }

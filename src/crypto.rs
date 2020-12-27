@@ -1,6 +1,7 @@
 use crate::algebra::Fp;
+
 use auto_ops::*;
-use num_traits::{One, Zero};
+use num_traits::Zero;
 use rand::Rng;
 
 #[derive(Copy, Clone, Debug)]
@@ -107,36 +108,54 @@ pub fn fake_auth_triple(n: usize, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<Au
     auth_triple(n, &Fp::zero(), rng)
 }
 
-// TODO wrong/insecure
-#[derive(Copy, Clone, Debug)]
-pub struct CommitmentScheme {
-    g: Fp,
-    h: Fp,
-}
+pub mod commit {
+    use crate::algebra::{to_le_bytes, Fp};
 
-#[derive(Copy, Clone, Debug)]
-pub struct Commitment {
-    c: Fp,
-    r: Fp,
-}
+    use rand::Rng;
+    use sha3;
+    use sha3::Digest;
 
-impl CommitmentScheme {
-    pub fn new() -> CommitmentScheme {
-        CommitmentScheme {
-            g: Fp::one() + Fp::one(),
-            h: Fp::one() + Fp::one() + Fp::one(),
-        }
+    #[derive(Copy, Clone, Debug)]
+    pub struct Commitment {
+        c: [u8; 32],
     }
-    pub fn commit(&self, secret: &Fp, rng: &mut impl Rng) -> Commitment {
-        let r: Fp = rng.gen();
-        Commitment {
-            c: self.g * secret + self.h * r,
-            r,
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct Opening {
+        v: Fp,
+        r: [u8; 32],
+    }
+
+    impl Opening {
+        pub fn get_v(&self) -> Fp {
+            self.v
         }
     }
 
-    pub fn verify(&self, secret: &Fp, com: &Commitment) -> bool {
-        com.c == (self.g * secret) + (self.h * com.r)
+    #[derive(Copy, Clone, Debug)]
+    pub struct Scheme {
+        // See Fig. 1 of https://eprint.iacr.org/2012/642.pdf
+    }
+
+    impl Scheme {
+        pub fn commit(&self, secret: Fp, rng: &mut impl Rng) -> (Commitment, Opening) {
+            let r: [u8; 32] = rng.gen();
+            let v = to_le_bytes(&secret);
+            let mut hasher = sha3::Sha3_256::new();
+            hasher.update(&r);
+            hasher.update(&v);
+            let c = hasher.finalize().into();
+            (Commitment { c }, Opening { v: secret, r })
+        }
+
+        pub fn verify(&self, opening: &Opening, com: &Commitment) -> bool {
+            let mut hasher = sha3::Sha3_256::new();
+            let v = to_le_bytes(&opening.v);
+            hasher.update(&opening.r);
+            hasher.update(&v);
+            let c_prime: [u8; 32] = hasher.finalize().into();
+            com.c == c_prime
+        }
     }
 }
 
@@ -147,11 +166,11 @@ mod tests {
     use num_traits::{One, Zero};
     use rand::{Rng, SeedableRng, StdRng};
 
-    const SEED: [usize; 4] = [0, 1, 2, 3];
+    const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
 
     #[test]
     fn test_fp_rand() {
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let a: Fp = rng.gen();
         let b: Fp = rng.gen();
         assert_ne!(a, b);
@@ -160,7 +179,7 @@ mod tests {
     #[test]
     fn test_unauth_sharing() {
         let n = 4;
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let secret: Fp = rng.gen();
         let shares = unauth_share(&secret, n, rng);
         let recovered = unauth_combine(&shares);
@@ -213,7 +232,7 @@ mod tests {
     #[test]
     fn test_unauth_triple() {
         let n = 4;
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         {
             let x: Fp = Fp::one();
             let y: Fp = Fp::one() + Fp::one();
@@ -243,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_auth_arithmetic() {
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let n = 4;
         let alpha: Fp = rng.gen();
         let alpha_shares = unauth_share(&alpha, n, rng);
@@ -277,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_auth_share() {
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let n = 4;
         let secret: Fp = rng.gen();
         let alpha: Fp = rng.gen();
@@ -331,7 +350,7 @@ mod tests {
     #[test]
     fn test_auth_triple() {
         let n = 4;
-        let rng = &mut StdRng::from_seed(&SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         {
             let x: Fp = Fp::one();
             let y: Fp = Fp::one() + Fp::one();
@@ -347,13 +366,21 @@ mod tests {
     }
 
     #[quickcheck]
-    fn prop_pedersen_commitment(secret: Fp) -> bool {
-        let rng = &mut StdRng::from_seed(&SEED);
-        let g: Fp = rng.gen();
-        let h: Fp = rng.gen();
+    fn prop_commitment(secret: Fp) -> bool {
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let scheme = commit::Scheme {};
+        let (commitment, opening) = scheme.commit(secret, rng);
+        scheme.verify(&opening, &commitment)
+    }
 
-        let scheme = CommitmentScheme { g, h };
-        let commitment = scheme.commit(&secret, rng);
-        scheme.verify(&secret, &commitment)
+    #[quickcheck]
+    fn prop_bad_commitment(secret: Fp) -> bool {
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let scheme = commit::Scheme {};
+        let (commitment, _) = scheme.commit(secret, rng);
+
+        let secret_bad = secret + Fp::one();
+        let (_, bad_opening) = scheme.commit(secret_bad, rng);
+        !scheme.verify(&bad_opening, &commitment)
     }
 }

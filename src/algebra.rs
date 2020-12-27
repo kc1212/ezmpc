@@ -214,6 +214,10 @@ impl std::iter::Sum for Fp {
     }
 }
 
+pub fn to_le_bytes(x: &Fp) -> [u8; 16] {
+    x.0.to_le_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

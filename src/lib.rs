@@ -40,7 +40,7 @@ mod tests {
     use crate::synchronizer::Synchronizer;
     use crate::vm;
 
-    const TEST_RNG_SEED: [usize; 4] = [0x0, 0x0, 0x0, 0x0];
+    const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
 
     fn create_sync_chans(
         n: usize,
@@ -105,8 +105,8 @@ mod tests {
             triple_receiver,
             vec![],
             vec![],
-            CommitmentScheme::new(),
-            TEST_RNG_SEED,
+            commit::Scheme {},
+            TEST_SEED,
         );
 
         let answer = node_handle.join().unwrap().unwrap();
@@ -150,8 +150,8 @@ mod tests {
             triple_receiver,
             vec![],
             vec![],
-            CommitmentScheme::new(),
-            TEST_RNG_SEED,
+            commit::Scheme {},
+            TEST_SEED,
         );
 
         let answer = node_handle.join().unwrap().unwrap();
@@ -193,8 +193,8 @@ mod tests {
                     triple_chans[i].1.clone(),
                     get_row(&node_chans, i).into_iter().map(|(s, _)| s).collect(),
                     get_col(&node_chans, i).into_iter().map(|(_, r)| r).collect(),
-                    CommitmentScheme::new(),
-                    TEST_RNG_SEED,
+                    commit::Scheme {},
+                    TEST_SEED,
                 );
                 node_handle
             })
@@ -223,7 +223,7 @@ mod tests {
         let n = 3;
         let prog = vec![vm::Instruction::Open(1, 0), vm::Instruction::COutput(1), vm::Instruction::Stop];
 
-        let rng = &mut StdRng::from_seed(&TEST_RNG_SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let zero = Fp::zero();
         let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&zero, n, rng)])
             .iter()
@@ -253,7 +253,7 @@ mod tests {
             vm::Instruction::Stop,
         ];
 
-        let rng = &mut StdRng::from_seed(&TEST_RNG_SEED);
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
         let x: Fp = rng.gen();
         let y: Fp = rng.gen();
         let expected = x * y;

@@ -1,5 +1,6 @@
 use crate::algebra::Fp;
-use crate::crypto::{AuthShare, Commitment, CommitmentScheme};
+use crate::crypto::commit;
+use crate::crypto::AuthShare;
 use crate::error::{OutputError, SomeError};
 use crate::message::*;
 use crate::vm;
@@ -18,7 +19,7 @@ pub struct Node {
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
     s_node_chan: Vec<Sender<NodeMsg>>,
     r_node_chan: Vec<Receiver<NodeMsg>>,
-    com_scheme: CommitmentScheme,
+    com_scheme: commit::Scheme,
 }
 
 impl Node {
@@ -32,7 +33,7 @@ impl Node {
         triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
         s_node_chan: Vec<Sender<NodeMsg>>,
         r_node_chan: Vec<Receiver<NodeMsg>>,
-        com_scheme: CommitmentScheme,
+        com_scheme: commit::Scheme,
         rng_seed: [usize; 4],
     ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
@@ -79,14 +80,21 @@ impl Node {
         let unwrap_elem_msg = |msg: &NodeMsg| -> Fp {
             match msg {
                 NodeMsg::Elem(x) => *x,
-                NodeMsg::Com(_) => panic!("expected an element message"),
+                _ => panic!("expected an element message"),
             }
         };
 
-        let unwrap_com_msg = |msg: &NodeMsg| -> Commitment {
+        let unwrap_com_msg = |msg: &NodeMsg| -> commit::Commitment {
             match msg {
-                NodeMsg::Elem(_) => panic!("expected a com message"),
                 NodeMsg::Com(c) => *c,
+                _ => panic!("expected a com message"),
+            }
+        };
+
+        let unwrap_open_msg = |msg: &NodeMsg| -> commit::Opening {
+            match msg {
+                NodeMsg::Opening(o) => *o,
+                _ => panic!("expected an open message"),
             }
         };
 
@@ -142,17 +150,17 @@ impl Node {
                                         // let d = alpha_i * x - mac_i
                                         let d = alpha_share * x - share.mac;
                                         // commit d
-                                        let d_com = self.com_scheme.commit(&d, rng);
+                                        let (d_com, d_open) = self.com_scheme.commit(d, rng);
                                         bcast(NodeMsg::Com(d_com))?;
                                         // get commitment from others
                                         let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
                                         // commit-open d and collect them
-                                        bcast(NodeMsg::Elem(d))?;
-                                        let ds: Vec<_> = recv()?.iter().map(unwrap_elem_msg).collect();
+                                        bcast(NodeMsg::Opening(d_open))?;
+                                        let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
                                         // verify all the commitments of d
                                         // and check they sum to 0
-                                        let coms_ok = ds.iter().zip(d_coms).map(|(d, com)| self.com_scheme.verify(&d, &com)).all(|x| x);
-                                        let zero_ok = ds.into_iter().sum::<Fp>() == Fp::zero();
+                                        let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
+                                        let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
                                         if !coms_ok {
                                             sender.send(Err(OutputError::BadCommitment))?;
                                         } else if !zero_ok {
