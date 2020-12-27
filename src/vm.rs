@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
-use crate::error::{EvalError, OutputError, SomeError};
+use crate::error::{OutputError, SomeError};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::min;
@@ -73,10 +73,10 @@ pub enum Instruction {
     Stop,                                       // stop the VM
 }
 
-fn wrap_option<T>(v: Option<T>, err: EvalError) -> Result<T, SomeError> {
+fn wrap_option<T>(v: Option<T>) -> Result<T, SomeError> {
     match v {
         Some(x) => Ok(x),
-        None => Err(err.into()),
+        None => Err(SomeError::EmptyError),
     }
 }
 
@@ -116,7 +116,7 @@ impl VM {
                 Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &s_chan)?,
                 Instruction::Open(to, from) => self.process_open(to, from, &s_chan)?,
                 Instruction::COutput(reg) => {
-                    output.push(wrap_option(self.reg.clear[reg], EvalError::OutputEmptyReg)?);
+                    output.push(wrap_option(self.reg.clear[reg])?);
                     s_chan.send(Action::None)?
                 }
                 Instruction::SOutput(reg) => {
@@ -133,13 +133,8 @@ impl VM {
         F: Fn(Fp, Fp) -> Fp,
     {
         let c = self.reg.clear[r1].zip(self.reg.clear[r2]).map(|(a, b)| op(a, b));
-        match c {
-            None => Err(EvalError::OpEmptyReg.into()),
-            Some(x) => {
-                self.reg.clear[r0] = Some(x);
-                Ok(Action::None)
-            }
-        }
+        self.reg.clear[r0] = Some(wrap_option(c)?);
+        Ok(Action::None)
     }
 
     fn do_clear_op_for_party<F>(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, op: F, id: PartyID) -> Result<Action, SomeError>
@@ -160,37 +155,22 @@ impl VM {
         F: Fn(AuthShare, AuthShare) -> AuthShare,
     {
         let c = self.reg.secret[r1].zip(self.reg.secret[r2]).map(|(a, b)| op(a, b));
-        match c {
-            None => Err(EvalError::OpEmptyReg.into()),
-            Some(x) => {
-                self.reg.secret[r0] = Some(x);
-                Ok(Action::None)
-            }
-        }
+        self.reg.secret[r0] = Some(wrap_option(c)?);
+        Ok(Action::None)
     }
 
     fn do_mixed_add(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr, id: PartyID) -> Result<Action, SomeError> {
         let c = self.reg.secret[s_r1]
             .zip(self.reg.clear[c_r2])
             .map(|(a, b)| a.add_const(&b, &self.alpha_share, self.id == id));
-        match c {
-            None => Err(EvalError::OpEmptyReg.into()),
-            Some(x) => {
-                self.reg.secret[s_r0] = Some(x);
-                Ok(Action::None)
-            }
-        }
+        self.reg.secret[s_r0] = Some(wrap_option(c)?);
+        Ok(Action::None)
     }
 
     fn do_mixed_mul(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr) -> Result<Action, SomeError> {
         let c = self.reg.secret[s_r1].zip(self.reg.clear[c_r2]).map(|(a, b)| a.mul_const(&b));
-        match c {
-            None => Err(EvalError::OpEmptyReg.into()),
-            Some(x) => {
-                self.reg.secret[s_r0] = Some(x);
-                Ok(Action::None)
-            }
-        }
+        self.reg.secret[s_r0] = Some(wrap_option(c)?);
+        Ok(Action::None)
     }
 
     fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
@@ -207,7 +187,7 @@ impl VM {
 
     fn process_open(&mut self, to: RegAddr, from: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
         match self.reg.secret[from] {
-            None => Err(EvalError::OpenEmptyReg.into()),
+            None => Err(SomeError::EmptyError),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
                 s_chan.send(Action::Open(for_opening.share, s))?;

@@ -8,21 +8,6 @@ use quick_error::quick_error;
 use std::fmt;
 
 #[derive(Debug)]
-pub enum EvalError {
-    OpenEmptyReg,
-    OutputEmptyReg,
-    OpEmptyReg,
-}
-
-impl fmt::Display for EvalError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "evaluation failed with error {:?}", self)
-    }
-}
-
-impl std::error::Error for EvalError {}
-
-#[derive(Debug)]
 pub enum OutputError {
     RegisterEmpty,
     BadCommitment,
@@ -40,9 +25,8 @@ impl std::error::Error for OutputError {}
 quick_error! {
     #[derive(Debug)]
     pub enum SomeError {
-        EvalError(err: EvalError) {
-            display("evaluation error: {}", err)
-            from()
+        EmptyError {
+            display("empty register")
         }
         OutputError(err: OutputError) {
             display("output error: {}", err)
