@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
-
 use crate::crypto::commit;
+
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::fmt::Debug;
@@ -14,10 +14,10 @@ pub(crate) fn broadcast<T: Copy + Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T)
     Ok(())
 }
 
-pub(crate) fn recv_all<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>) -> Result<Vec<T>, RecvTimeoutError> {
+pub(crate) fn recv_all<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duration) -> Result<Vec<T>, RecvTimeoutError> {
     let mut out: Vec<T> = Vec::new();
     for c in r_chans {
-        let m = c.recv_timeout(Duration::from_secs(1))?;
+        let m = c.recv_timeout(dur)?;
         out.push(m);
     }
     debug!("All received {:?}", out);

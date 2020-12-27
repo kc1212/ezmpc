@@ -1,7 +1,7 @@
 use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
-use crate::error::{OutputError, SomeError};
+use crate::error::{OutputError, SomeError, TIMEOUT};
 use crate::message::*;
 use crate::vm;
 
@@ -11,7 +11,6 @@ use num_traits::Zero;
 use rand::{SeedableRng, StdRng};
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 pub struct Node {
     s_sync_chan: Sender<SyncMsgReply>,
@@ -99,7 +98,7 @@ impl Node {
         };
 
         let bcast = |m| broadcast(&self.s_node_chan, m);
-        let recv = || recv_all(&self.r_node_chan);
+        let recv = || recv_all(&self.r_node_chan, TIMEOUT);
 
         // process instructions
         loop {
@@ -127,7 +126,7 @@ impl Node {
                                 self.s_sync_chan.send(SyncMsgReply::Done)?;
                                 break;
                             } else {
-                                let action = r_action_chan.recv_timeout(Duration::from_secs(1))?;
+                                let action = r_action_chan.recv_timeout(TIMEOUT)?;
                                 debug!("Received action {:?} from VM", action);
                                 match action {
                                     vm::Action::None => (),
@@ -139,7 +138,7 @@ impl Node {
                                     vm::Action::Triple(sender) => {
                                         let triple = match triples.pop() {
                                             Some(t) => t,
-                                            None => self.triple_chan.recv_timeout(Duration::from_secs(1))?,
+                                            None => self.triple_chan.recv_timeout(TIMEOUT)?,
                                         };
                                         sender.send(triple)?
                                     }

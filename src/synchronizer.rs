@@ -1,4 +1,4 @@
-use crate::error::SomeError;
+use crate::error::{SomeError, TIMEOUT};
 use crate::message::*;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
@@ -11,10 +11,7 @@ pub struct Synchronizer {
 }
 
 impl Synchronizer {
-    pub fn spawn(
-        s_chans: Vec<Sender<SyncMsg>>,
-        r_chans: Vec<Receiver<SyncMsgReply>>,
-    ) -> JoinHandle<Result<(), SomeError>> {
+    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncMsgReply>>) -> JoinHandle<Result<(), SomeError>> {
         thread::spawn(move || {
             let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
@@ -28,7 +25,7 @@ impl Synchronizer {
     }
 
     fn recv_all(&self) -> Result<Vec<SyncMsgReply>, RecvTimeoutError> {
-        recv_all(&self.r_chans)
+        recv_all(&self.r_chans, TIMEOUT)
     }
 
     fn listen(&self) -> Result<(), SomeError> {
@@ -53,11 +50,9 @@ impl Synchronizer {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::message::{SyncMsg, SyncMsgReply};
-
-    use super::Synchronizer;
     use crossbeam_channel::bounded;
-    use std::time::Duration;
 
     #[test]
     fn test_synchronizer() {
@@ -66,28 +61,16 @@ mod tests {
         let handler = Synchronizer::spawn(vec![s_msg], vec![r_reply]);
 
         // we expect to hear a Start followed by a Next
-        assert_eq!(
-            SyncMsg::Start,
-            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
-        );
-        assert_eq!(
-            SyncMsg::Next,
-            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
-        );
+        assert_eq!(SyncMsg::Start, r_msg.recv_timeout(TIMEOUT).unwrap());
+        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         // then we expect Next again after sending Ok
         s_reply.send(SyncMsgReply::Ok).unwrap();
-        assert_eq!(
-            SyncMsg::Next,
-            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
-        );
+        assert_eq!(SyncMsg::Next, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         // finally, sending Abort will respond with Abort
         s_reply.send(SyncMsgReply::Abort).unwrap();
-        assert_eq!(
-            SyncMsg::Abort,
-            r_msg.recv_timeout(Duration::from_secs(1)).unwrap()
-        );
+        assert_eq!(SyncMsg::Abort, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         assert_eq!((), handler.join().unwrap().unwrap());
     }

@@ -5,7 +5,10 @@ use crate::vm;
 
 use crossbeam_channel;
 use std::fmt;
+use std::time::Duration;
 use thiserror::Error;
+
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum OutputError {

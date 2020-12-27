@@ -1,13 +1,12 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
-use crate::error::{OutputError, SomeError};
+use crate::error::{OutputError, SomeError, TIMEOUT};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::cmp::min;
 use std::ops;
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 type RegAddr = usize;
 pub type PartyID = usize;
@@ -103,7 +102,7 @@ impl VM {
         let mut output = Vec::new();
 
         loop {
-            let inst = r_chan.recv_timeout(Duration::from_secs(1))?;
+            let inst = r_chan.recv_timeout(TIMEOUT)?;
             match inst {
                 Instruction::CAdd(r0, r1, r2) => s_chan.send(self.do_clear_op(r0, r1, r2, ops::Add::add)?)?,
                 Instruction::CSub(r0, r1, r2) => s_chan.send(self.do_clear_op(r0, r1, r2, ops::Sub::sub)?)?,
@@ -178,7 +177,7 @@ impl VM {
         s_chan.send(Action::Triple(s))?;
 
         // wait for the triple
-        let triple = r.recv_timeout(Duration::from_secs(1))?;
+        let triple = r.recv_timeout(TIMEOUT)?;
         self.reg.secret[r0] = Some(triple.0);
         self.reg.secret[r1] = Some(triple.1);
         self.reg.secret[r2] = Some(triple.2);
@@ -194,7 +193,7 @@ impl VM {
 
                 // wait for the response
                 // TODO parameterize these timeouts
-                let opened: Fp = r.recv_timeout(Duration::from_secs(1))?;
+                let opened: Fp = r.recv_timeout(TIMEOUT)?;
                 self.reg.clear[to] = Some(opened);
                 Ok(())
             }
@@ -210,7 +209,7 @@ impl VM {
         s_chan.send(Action::SOutput(share, s))?;
 
         // wait for response
-        r.recv_timeout(Duration::from_secs(1))??;
+        r.recv_timeout(TIMEOUT)??;
         Ok(share.share)
     }
 }
@@ -242,15 +241,15 @@ mod tests {
             if instruction == Instruction::Stop {
                 break;
             }
-            let reply = r_action_chan.recv_timeout(Duration::from_secs(1))?;
+            let reply = r_action_chan.recv_timeout(TIMEOUT)?;
             match reply {
                 Action::None => (),
                 Action::Open(_, sender) => {
-                    let x = open_chan.recv_timeout(Duration::from_secs(1))?;
+                    let x = open_chan.recv_timeout(TIMEOUT)?;
                     sender.send(x)?
                 }
                 Action::Triple(sender) => {
-                    let triple = triple_chan.recv_timeout(Duration::from_secs(1))?;
+                    let triple = triple_chan.recv_timeout(TIMEOUT)?;
                     sender.send(triple)?
                 }
                 Action::SOutput(_, sender) => sender.send(Ok(()))?,
