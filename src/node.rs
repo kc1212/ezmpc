@@ -179,6 +179,6 @@ impl Node {
             }
         }
 
-        vm_handler.join()?
+        vm_handler.join().expect("thread panicked")
     }
 }

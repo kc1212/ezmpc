@@ -4,8 +4,8 @@ use crate::message;
 use crate::vm;
 
 use crossbeam_channel;
-use quick_error::quick_error;
 use std::fmt;
+use thiserror::Error;
 
 #[derive(Debug)]
 pub enum OutputError {
@@ -22,59 +22,30 @@ impl fmt::Display for OutputError {
 
 impl std::error::Error for OutputError {}
 
-quick_error! {
-    #[derive(Debug)]
-    pub enum SomeError {
-        EmptyError {
-            display("empty register")
-        }
-        OutputError(err: OutputError) {
-            display("output error: {}", err)
-            from()
-        }
-        JoinError(err: Box<dyn std::any::Any + Send>) {
-            display("join error: {:?}", err)
-            from()
-        }
-        RecvError(err: crossbeam_channel::RecvError) {
-            display("receive error: {}", err)
-            from()
-        }
-        RecvTimeoutError(err: crossbeam_channel::RecvTimeoutError) {
-            display("receive timeout error: {}", err)
-            from()
-        }
-        SendErrorSyncMsg(err: crossbeam_channel::SendError<message::SyncMsg>) {
-            display("send SyncMsgs error: {}", err)
-            from()
-        }
-        SendErrorSyncMsgReply(err: crossbeam_channel::SendError<message::SyncMsgReply>) {
-            display("send SyncMsgReply error: {}", err)
-            from()
-        }
-        SendErrorNodeMsg(err: crossbeam_channel::SendError<message::NodeMsg>) {
-            display("send NodeMsg error: {}", err)
-            from()
-        }
-        SendErrorAction(err: crossbeam_channel::SendError<vm::Action>) {
-            display("send Action error: {}", err)
-            from()
-        }
-        SendErrorInstruction(err: crossbeam_channel::SendError<vm::Instruction>) {
-            display("send Instruction error: {}", err)
-            from()
-        }
-        SendErrorTriple(err: crossbeam_channel::SendError<(AuthShare, AuthShare, AuthShare)>) {
-            display("send Triple error: {}", err)
-            from()
-        }
-        SendErrorFp(err: crossbeam_channel::SendError<Fp>) {
-            display("send Fp error: {}", err)
-            from()
-        }
-        SendErrorOutputResult(err: crossbeam_channel::SendError<Result<(), OutputError>>) {
-            display("send output verification result error: {}", err)
-            from()
-        }
-    }
+#[derive(Error, Debug)]
+pub enum SomeError {
+    #[error("empty register")]
+    EmptyError,
+    #[error(transparent)]
+    OutputError(#[from] OutputError),
+    #[error(transparent)]
+    RecvError(#[from] crossbeam_channel::RecvError),
+    #[error(transparent)]
+    RecvTimeoutError(#[from] crossbeam_channel::RecvTimeoutError),
+    #[error(transparent)]
+    SendErrorSyncMsg(#[from] crossbeam_channel::SendError<message::SyncMsg>),
+    #[error(transparent)]
+    SendErrorSyncMsgReply(#[from] crossbeam_channel::SendError<message::SyncMsgReply>),
+    #[error(transparent)]
+    SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::NodeMsg>),
+    #[error(transparent)]
+    SendErrorAction(#[from] crossbeam_channel::SendError<vm::Action>),
+    #[error(transparent)]
+    SendErrorInstruction(#[from] crossbeam_channel::SendError<vm::Instruction>),
+    #[error(transparent)]
+    SendErrorTriple(#[from] crossbeam_channel::SendError<(AuthShare, AuthShare, AuthShare)>),
+    #[error(transparent)]
+    SendErrorFp(#[from] crossbeam_channel::SendError<Fp>),
+    #[error(transparent)]
+    SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), OutputError>>),
 }

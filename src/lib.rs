@@ -10,8 +10,8 @@ pub mod vm;
 extern crate auto_ops;
 extern crate crossbeam_channel;
 extern crate log;
-extern crate quick_error;
 extern crate rand;
+extern crate thiserror;
 
 extern crate alga;
 extern crate alga_derive;
