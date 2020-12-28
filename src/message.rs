@@ -50,8 +50,8 @@ pub enum NodeMsg {
 
 #[derive(Copy, Clone, Debug)]
 pub struct InputRandMsg {
-    pub auth_share: crypto::AuthShare,
-    pub clear_rand: Option<Fp>,
+    pub share: crypto::AuthShare,
+    pub clear: Option<Fp>,
     pub party_id: PartyID,
 }
 

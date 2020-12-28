@@ -221,12 +221,14 @@ impl VM {
         let (s, r) = bounded(1);
         if self.id == id {
             let x = opt_to_res(self.reg.clear[r1])?;
-            let e = x - opt_to_res(rand_share.clear_rand)?;
+            let e = x - opt_to_res(rand_share.clear)?;
             s_chan.send(Action::Input(id, Some(e), s))?;
+        } else {
+            s_chan.send(Action::Input(id, None, s))?;
         }
 
         let e = r.recv_timeout(TIMEOUT)?;
-        let input_share = rand_share.auth_share.add_const(&e, &self.alpha_share, self.id == id);
+        let input_share = rand_share.share.add_const(&e, &self.alpha_share, self.id == id);
         self.reg.secret[r0] = Some(input_share);
         Ok(())
     }
@@ -445,11 +447,11 @@ mod tests {
         let (_, dummy_open_chan) = bounded(5);
 
         let rand_msg = InputRandMsg {
-            auth_share: AuthShare {
+            share: AuthShare {
                 share: r_share,
                 mac: Fp::zero(),
             },
-            clear_rand: Some(r),
+            clear: Some(r),
             party_id: 0,
         };
         s_rand_chan.send(rand_msg).unwrap();
@@ -465,7 +467,7 @@ mod tests {
         // for rand_msg, the clear value is r, with a share of r-1
         // the vm computes e = x - r
         // then computes r_share + e as the final input sharing
-        result.len() == 1 && result[0] == rand_msg.auth_share.share + (x - r)
+        result.len() == 1 && result[0] == rand_msg.share.share + (x - r)
     }
 
     // TODO test for failures

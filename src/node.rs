@@ -78,21 +78,21 @@ impl Node {
         let unwrap_elem_msg = |msg: &NodeMsg| -> Fp {
             match msg {
                 NodeMsg::Elem(x) => *x,
-                _ => panic!("expected an element message"),
+                e => panic!("expected an element message but got {:?}", e),
             }
         };
 
         let unwrap_com_msg = |msg: &NodeMsg| -> commit::Commitment {
             match msg {
                 NodeMsg::Com(c) => *c,
-                _ => panic!("expected a com message"),
+                e => panic!("expected a com message but got {:?}", e),
             }
         };
 
         let unwrap_open_msg = |msg: &NodeMsg| -> commit::Opening {
             match msg {
                 NodeMsg::Opening(o) => *o,
-                _ => panic!("expected an open message"),
+                e => panic!("expected an open message but got {:?}", e),
             }
         };
 
@@ -130,24 +130,21 @@ impl Node {
                                 match action {
                                     vm::Action::None => (),
                                     vm::Action::Open(x, sender) => {
+                                        // TODO add partially opened values to be checked by SOutput
                                         bcast(NodeMsg::Elem(x))?;
                                         let result = recv()?.iter().map(unwrap_elem_msg).sum();
                                         sender.send(result)?
                                     }
                                     vm::Action::Input(id, e_option, sender) => {
-                                        let e = match e_option {
-                                            Some(e) => {
-                                                bcast(NodeMsg::Elem(e))?;
-                                                e
-                                            },
-                                            None => {
-                                                let e = self.r_node_chan[id].recv_timeout(TIMEOUT)?;
-                                                unwrap_elem_msg(&e)
-                                            }
+                                        match e_option {
+                                            Some(e) => bcast(NodeMsg::Elem(e))?,
+                                            None => (),
                                         };
+                                        let e = unwrap_elem_msg(&self.r_node_chan[id].recv_timeout(TIMEOUT)?);
                                         sender.send(e)?
                                     }
                                     vm::Action::SOutput(share, sender) => {
+                                        // TODO check all partially opened values
                                         // open x
                                         bcast(NodeMsg::Elem(share.share))?;
                                         let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
@@ -186,3 +183,5 @@ impl Node {
         vm_handler.join().expect("thread panicked")
     }
 }
+
+// TODO add node specific tests using a mock VM

@@ -190,7 +190,7 @@ mod tests {
         // TODO this is more rand shares than we need, since we're giving every party max_rand_count number of shares
         let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
         let rand_chans = create_chans::<InputRandMsg>(n, max_rand_count * n);
-        for id in 0..n {
+        for clear_id in 0..n {
             for _ in 0..max_rand_count {
                 let r: Fp = rng.gen();
                 let auth_shares = auth_share(&r, n, &alpha, rng);
@@ -198,9 +198,9 @@ mod tests {
                     .iter()
                     .enumerate()
                     .map(|(i, share)| InputRandMsg {
-                        auth_share: *share,
-                        clear_rand: if id == i { Some(r) } else { None },
-                        party_id: id,
+                        share: *share,
+                        clear: if clear_id == i { Some(r) } else { None },
+                        party_id: clear_id,
                     })
                     .collect();
                 for (i, (s, _)) in rand_chans.iter().enumerate() {
@@ -279,13 +279,36 @@ mod tests {
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let x: Fp = rng.gen();
         let y: Fp = rng.gen();
-        let expected = x * y;
+        let expected = vec![x * y];
 
         let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&x, n, rng), fake_auth_share(&y, n, rng)])
             .iter()
             .map(|v| vm::vec_to_reg(&vec![], v))
             .collect();
 
-        generic_integration_test(n, prog, regs, vec![expected], rng);
+        generic_integration_test(n, prog, regs, expected, rng);
+    }
+
+    #[test]
+    fn integration_test_input() {
+        let n = 3;
+        let prog = vec![
+            vm::Instruction::Input(0, 0, 0),
+            vm::Instruction::Input(1, 1, 1),
+            vm::Instruction::SOutput(0),
+            vm::Instruction::SOutput(1),
+            vm::Instruction::Stop,
+        ];
+
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let input_0: Fp = rng.gen();
+        let input_1: Fp = rng.gen();
+        let expected = vec![input_0, input_1];
+        let regs = vec![
+            vm::vec_to_reg(&vec![input_0, Fp::zero()], &vec![]),
+            vm::vec_to_reg(&vec![Fp::zero(), input_1], &vec![]),
+            vm::empty_reg(),
+        ];
+        generic_integration_test(n, prog, regs, expected, rng);
     }
 }
