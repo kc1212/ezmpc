@@ -228,4 +228,11 @@ mod tests {
         fn is_field<T: Field>() {}
         is_field::<Fp>();
     }
+
+    #[quickcheck]
+    fn prop_diffie_hellman(g: Fp, a: Fp, b: Fp) -> bool {
+        let ga = g.pow(a);
+        let gb = g.pow(b);
+        gb.pow(a) == ga.pow(b)
+    }
 }
