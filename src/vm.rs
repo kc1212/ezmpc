@@ -23,11 +23,11 @@ const REG_SIZE: usize = 128;
 
 pub struct VM {
     id: PartyID,
-    alpha_share: Fp, // TODO could be a reference type
+    alpha_share: Fp, // could be a reference type
     reg: Reg,
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
     rand_chan: Receiver<InputRandMsg>,
-    rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>, // indexed by party ID
+    rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
 }
 
 pub fn empty_reg() -> Reg {
@@ -272,7 +272,7 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_traits::{One, Zero};
+    use num_traits::Zero;
 
     fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_triple_chan) = bounded(5);
@@ -397,22 +397,25 @@ mod tests {
         result[0] == s1 * c2
     }
 
-    #[test]
-    fn test_open() {
+    #[quickcheck]
+    fn prop_open(s: Fp, v: Fp) -> bool {
         let prog = vec![Instruction::Open(0, 0), Instruction::COutput(0), Instruction::Stop];
-        let reg = unauth_vec_to_reg(&vec![], &vec![Fp::one()]);
+        let reg = unauth_vec_to_reg(&vec![], &vec![s]);
 
         let (_, dummy_triple_chan) = bounded(5);
         let (_, dummy_rand_chan) = bounded(5);
         let (s_open_chan, r_open_chan) = bounded(5);
-        s_open_chan.send(Fp::zero()).unwrap();
+
+        s_open_chan.send(v).unwrap();
         let result = vm_runner(prog, reg, dummy_triple_chan, dummy_rand_chan, r_open_chan).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Fp::zero());
+
+        // the result should be whatever we send in the s_open_chan,
+        // regardless of what the initial secret value is
+        result.len() == 1 && result[0] == v
     }
 
-    #[test]
-    fn test_triple() {
+    #[quickcheck]
+    fn prop_triple(a: Fp, b: Fp, c: Fp) -> bool {
         let prog = vec![
             Instruction::Triple(0, 1, 2),
             Instruction::SOutput(0),
@@ -424,29 +427,18 @@ mod tests {
         let (s_triple_chan, r_triple_chan) = bounded(5);
         let (_, dummy_rand_chan) = bounded(5);
         let (_, dummy_open_chan) = bounded(5);
-        let zero = AuthShare {
-            share: Fp::zero(),
-            mac: Fp::zero(),
-        };
-        let one = AuthShare {
-            share: Fp::one(),
-            mac: Fp::one(),
-        };
-        let two = one + one;
-        s_triple_chan.send((zero, one, two)).unwrap();
+
+        let a_share = AuthShare { share: a, mac: Fp::zero() };
+        let b_share = AuthShare { share: b, mac: Fp::zero() };
+        let c_share = AuthShare { share: c, mac: Fp::zero() };
+        s_triple_chan.send((a_share, b_share, c_share)).unwrap();
         let result = vm_runner(prog, empty_reg(), r_triple_chan, dummy_rand_chan, dummy_open_chan).unwrap();
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0], zero.share);
-        assert_eq!(result[1], one.share);
-        assert_eq!(result[2], two.share);
+        result.len() == 3 && result[0] == a_share.share && result[1] == b_share.share && result[2] == c_share.share
     }
 
-    #[test]
-    fn test_input() {
+    #[quickcheck]
+    fn prop_input(r: Fp, r_share: Fp, x: Fp) -> bool {
         let prog = vec![Instruction::Input(0, 0, 0), Instruction::SOutput(0), Instruction::Stop];
-
-        let x = Fp::one();
-        let r = x + x;
 
         let (_, dummy_triple_chan) = bounded(5);
         let (s_rand_chan, r_rand_chan) = bounded(5);
@@ -454,7 +446,7 @@ mod tests {
 
         let rand_msg = InputRandMsg {
             auth_share: AuthShare {
-                share: r - Fp::one(),
+                share: r_share,
                 mac: Fp::zero(),
             },
             clear_rand: Some(r),
@@ -473,8 +465,7 @@ mod tests {
         // for rand_msg, the clear value is r, with a share of r-1
         // the vm computes e = x - r
         // then computes r_share + e as the final input sharing
-        assert_eq!(result[0], rand_msg.auth_share.share + (x - r));
-        assert_eq!(result.len(), 1);
+        result.len() == 1 && result[0] == rand_msg.auth_share.share + (x - r)
     }
 
     // TODO test for failures
