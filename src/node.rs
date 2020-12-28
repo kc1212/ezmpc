@@ -54,17 +54,6 @@ impl Node {
     fn listen(&mut self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, SomeError> {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
-        // wait for start
-        loop {
-            let msg = self.r_sync_chan.recv()?;
-            if msg == SyncMsg::Start {
-                debug!("Starting");
-                break;
-            } else {
-                debug!("Received {:?} while waiting to start", msg);
-            }
-        }
-
         // init forwarding channels
         let (s_inner_triple_chan, r_inner_triple_chan) = bounded(1024); // TODO what should the cap be?
         let (s_inner_rand_chan, r_inner_rand_chan) = bounded(1024); // TODO what should the cap be?
@@ -98,6 +87,17 @@ impl Node {
 
         let bcast = |m| broadcast(&self.s_node_chan, m);
         let recv = || recv_all(&self.r_node_chan, TIMEOUT);
+
+        // wait for start
+        loop {
+            let msg = self.r_sync_chan.recv()?;
+            if msg == SyncMsg::Start {
+                debug!("Starting");
+                break;
+            } else {
+                debug!("Received {:?} while waiting to start", msg);
+            }
+        }
 
         // process instructions
         loop {

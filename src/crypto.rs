@@ -108,16 +108,34 @@ pub mod commit {
     use rand::Rng;
     use sha3;
     use sha3::Digest;
+    use std::fmt;
 
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Copy, Clone)]
     pub struct Commitment {
         c: [u8; 32],
     }
 
-    #[derive(Copy, Clone, Debug)]
+    impl fmt::Debug for Commitment {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Commitment")
+                .field("c", &format_args!("{:x?}...", self.c.get(0..2).unwrap()))
+                .finish()
+        }
+    }
+
+    #[derive(Copy, Clone)]
     pub struct Opening {
         v: Fp,
         r: [u8; 32],
+    }
+
+    impl fmt::Debug for Opening {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Opening")
+                .field("v", &self.v)
+                .field("r", &format_args!("{:x?}...", self.r.get(0..2).unwrap()))
+                .finish()
+        }
     }
 
     impl Opening {
