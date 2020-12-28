@@ -42,12 +42,6 @@ impl_op_ex!(-|a: &AuthShare, b: &AuthShare| -> AuthShare {
     }
 });
 
-#[derive(Copy, Clone, Debug)]
-pub struct AuthRand {
-    pub auth_share: AuthShare,
-    pub clear_rand: Option<Fp>,
-}
-
 pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     let mut out: Vec<Fp> = vec![Fp::zero(); n];
     let mut sum = Fp::zero();

@@ -42,13 +42,17 @@ pub enum SomeError {
     #[error(transparent)]
     SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::NodeMsg>),
     #[error(transparent)]
+    SendErrorInputRandMsg(#[from] crossbeam_channel::SendError<message::InputRandMsg>),
+    #[error(transparent)]
     SendErrorAction(#[from] crossbeam_channel::SendError<vm::Action>),
     #[error(transparent)]
     SendErrorInstruction(#[from] crossbeam_channel::SendError<vm::Instruction>),
     #[error(transparent)]
-    SendErrorTriple(#[from] crossbeam_channel::SendError<(AuthShare, AuthShare, AuthShare)>),
-    #[error(transparent)]
     SendErrorFp(#[from] crossbeam_channel::SendError<Fp>),
     #[error(transparent)]
     SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), OutputError>>),
+    #[error(transparent)]
+    TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<(AuthShare, AuthShare, AuthShare)>),
+    #[error(transparent)]
+    TrySendErrorInputRandMsg(#[from] crossbeam_channel::TrySendError<message::InputRandMsg>),
 }

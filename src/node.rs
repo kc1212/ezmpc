@@ -16,6 +16,7 @@ pub struct Node {
     s_sync_chan: Sender<SyncMsgReply>,
     r_sync_chan: Receiver<SyncMsg>,
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+    rand_chan: Receiver<InputRandMsg>,
     s_node_chan: Vec<Sender<NodeMsg>>,
     r_node_chan: Vec<Receiver<NodeMsg>>,
     com_scheme: commit::Scheme,
@@ -23,13 +24,14 @@ pub struct Node {
 
 impl Node {
     pub fn spawn(
-        id: vm::PartyID,
+        id: PartyID,
         alpha_share: Fp,
         reg: vm::Reg,
         instructions: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncMsgReply>,
         r_sync_chan: Receiver<SyncMsg>,
         triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        rand_chan: Receiver<InputRandMsg>,
         s_node_chan: Vec<Sender<NodeMsg>>,
         r_node_chan: Vec<Receiver<NodeMsg>>,
         com_scheme: commit::Scheme,
@@ -40,6 +42,7 @@ impl Node {
                 s_sync_chan,
                 r_sync_chan,
                 triple_chan,
+                rand_chan,
                 s_node_chan,
                 r_node_chan,
                 com_scheme,
@@ -48,14 +51,7 @@ impl Node {
         })
     }
 
-    fn listen(
-        &mut self,
-        id: vm::PartyID,
-        alpha_share: Fp,
-        reg: vm::Reg,
-        prog: Vec<vm::Instruction>,
-        rng_seed: [usize; 4],
-    ) -> Result<Vec<Fp>, SomeError> {
+    fn listen(&mut self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, SomeError> {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
         // wait for start
@@ -69,12 +65,15 @@ impl Node {
             }
         }
 
+        // init forwarding channels
+        let (s_inner_triple_chan, r_inner_triple_chan) = bounded(1024); // TODO what should the cap be?
+        let (s_inner_rand_chan, r_inner_rand_chan) = bounded(1024); // TODO what should the cap be?
+
         // start the vm
         let (s_inst_chan, r_inst_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
-        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inst_chan, s_action_chan);
+        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inner_triple_chan, r_inner_rand_chan, r_inst_chan, s_action_chan);
         let mut pc = 0;
-        let mut triples = Vec::new();
 
         let unwrap_elem_msg = |msg: &NodeMsg| -> Fp {
             match msg {
@@ -103,11 +102,11 @@ impl Node {
         // process instructions
         loop {
             select! {
-                recv(self.triple_chan) -> triple => {
-                    match triple {
-                        Ok(t) => triples.push(t),
-                        Err(e) => debug!("Triple error {}", e),
-                    }
+                recv(self.triple_chan) -> x => {
+                    s_inner_triple_chan.try_send(x?)?
+                }
+                recv(self.rand_chan) -> x => {
+                    s_inner_rand_chan.try_send(x?)?
                 }
                 recv(self.r_sync_chan) -> v => {
                     let msg: SyncMsg = v?;
@@ -135,12 +134,18 @@ impl Node {
                                         let result = recv()?.iter().map(unwrap_elem_msg).sum();
                                         sender.send(result)?
                                     }
-                                    vm::Action::Triple(sender) => {
-                                        let triple = match triples.pop() {
-                                            Some(t) => t,
-                                            None => self.triple_chan.recv_timeout(TIMEOUT)?,
+                                    vm::Action::Input(id, e_option, sender) => {
+                                        let e = match e_option {
+                                            Some(e) => {
+                                                bcast(NodeMsg::Elem(e))?;
+                                                e
+                                            },
+                                            None => {
+                                                let e = self.r_node_chan[id].recv_timeout(TIMEOUT)?;
+                                                unwrap_elem_msg(&e)
+                                            }
                                         };
-                                        sender.send(triple)?
+                                        sender.send(e)?
                                     }
                                     vm::Action::SOutput(share, sender) => {
                                         // open x

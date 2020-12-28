@@ -1,16 +1,17 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
 use crate::error::{OutputError, SomeError, TIMEOUT};
+use crate::message::{InputRandMsg, PartyID};
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, select, Receiver, Sender};
 use num_traits::Zero;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::ops;
 use std::thread;
 use std::thread::JoinHandle;
 
 type RegAddr = usize;
-pub type PartyID = usize;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Reg {
@@ -24,6 +25,9 @@ pub struct VM {
     id: PartyID,
     alpha_share: Fp, // TODO could be a reference type
     reg: Reg,
+    triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+    rand_chan: Receiver<InputRandMsg>,
+    rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>, // indexed by party ID
 }
 
 pub fn empty_reg() -> Reg {
@@ -63,7 +67,7 @@ pub fn unauth_vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<Fp>) -> Reg {
 pub enum Action {
     None,
     Open(Fp, Sender<Fp>),
-    Triple(Sender<(AuthShare, AuthShare, AuthShare)>),
+    Input(PartyID, Option<Fp>, Sender<Fp>),
     SOutput(AuthShare, Sender<Result<(), OutputError>>),
 }
 
@@ -76,6 +80,7 @@ pub enum Instruction {
     SSub(RegAddr, RegAddr, RegAddr),          // secret sub
     MAdd(RegAddr, RegAddr, RegAddr, PartyID), // mixed add: [a+b] <- a + [b]
     MMul(RegAddr, RegAddr, RegAddr),          // mixed mul: [a*b] <- a * [b]
+    Input(RegAddr, RegAddr, PartyID),         // input value
     Triple(RegAddr, RegAddr, RegAddr),        // store triple
     Open(RegAddr, RegAddr),                   // open a shared/secret value
     COutput(RegAddr),                         // output a clear value
@@ -83,7 +88,7 @@ pub enum Instruction {
     Stop,                                     // stop the VM
 }
 
-fn wrap_option<T>(v: Option<T>) -> Result<T, SomeError> {
+fn opt_to_res<T>(v: Option<T>) -> Result<T, SomeError> {
     match v {
         Some(x) => Ok(x),
         None => Err(SomeError::EmptyError),
@@ -95,17 +100,32 @@ impl VM {
         id: PartyID,
         alpha_share: Fp,
         reg: Reg,
+        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        rand_chan: Receiver<InputRandMsg>,
         r_chan: Receiver<Instruction>,
         s_chan: Sender<Action>,
     ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
         thread::spawn(move || {
-            let mut vm = VM::new(id, alpha_share, reg);
+            let mut vm = VM::new(id, alpha_share, reg, triple_chan, rand_chan);
             vm.listen(r_chan, s_chan)
         })
     }
 
-    fn new(id: PartyID, alpha_share: Fp, reg: Reg) -> VM {
-        VM { id, alpha_share, reg }
+    fn new(
+        id: PartyID,
+        alpha_share: Fp,
+        reg: Reg,
+        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        rand_chan: Receiver<InputRandMsg>,
+    ) -> VM {
+        VM {
+            id,
+            alpha_share,
+            reg,
+            triple_chan,
+            rand_chan,
+            rand_msgs: HashMap::new(),
+        }
     }
 
     // listen for incoming instructions, send some result back to sender
@@ -122,10 +142,11 @@ impl VM {
                 Instruction::SSub(r0, r1, r2) => s_chan.send(self.do_secret_op(r0, r1, r2, ops::Sub::sub)?)?,
                 Instruction::MAdd(r0, r1, r2, id) => s_chan.send(self.do_mixed_add(r0, r1, r2, id)?)?,
                 Instruction::MMul(r0, r1, r2) => s_chan.send(self.do_mixed_mul(r0, r1, r2)?)?,
+                Instruction::Input(r0, r1, id) => self.process_input(r0, r1, id, &s_chan)?,
                 Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &s_chan)?,
                 Instruction::Open(to, from) => self.process_open(to, from, &s_chan)?,
                 Instruction::COutput(reg) => {
-                    output.push(wrap_option(self.reg.clear[reg])?);
+                    output.push(opt_to_res(self.reg.clear[reg])?);
                     s_chan.send(Action::None)?
                 }
                 Instruction::SOutput(reg) => {
@@ -142,7 +163,7 @@ impl VM {
         F: Fn(Fp, Fp) -> Fp,
     {
         let c = self.reg.clear[r1].zip(self.reg.clear[r2]).map(|(a, b)| op(a, b));
-        self.reg.clear[r0] = Some(wrap_option(c)?);
+        self.reg.clear[r0] = Some(opt_to_res(c)?);
         Ok(Action::None)
     }
 
@@ -151,7 +172,7 @@ impl VM {
         F: Fn(AuthShare, AuthShare) -> AuthShare,
     {
         let c = self.reg.secret[r1].zip(self.reg.secret[r2]).map(|(a, b)| op(a, b));
-        self.reg.secret[r0] = Some(wrap_option(c)?);
+        self.reg.secret[r0] = Some(opt_to_res(c)?);
         Ok(Action::None)
     }
 
@@ -159,25 +180,63 @@ impl VM {
         let c = self.reg.secret[s_r1]
             .zip(self.reg.clear[c_r2])
             .map(|(a, b)| a.add_const(&b, &self.alpha_share, self.id == id));
-        self.reg.secret[s_r0] = Some(wrap_option(c)?);
+        self.reg.secret[s_r0] = Some(opt_to_res(c)?);
         Ok(Action::None)
     }
 
     fn do_mixed_mul(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr) -> Result<Action, SomeError> {
         let c = self.reg.secret[s_r1].zip(self.reg.clear[c_r2]).map(|(a, b)| a.mul_const(&b));
-        self.reg.secret[s_r0] = Some(wrap_option(c)?);
+        self.reg.secret[s_r0] = Some(opt_to_res(c)?);
         Ok(Action::None)
     }
 
-    fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
-        let (s, r) = bounded(1);
-        s_chan.send(Action::Triple(s))?;
+    fn get_rand_share_for_id(&mut self, id: PartyID) -> Result<InputRandMsg, SomeError> {
+        loop {
+            select! {
+                recv(self.rand_chan) -> r_res => {
+                    // create empty entry if id does not exist
+                    let r = r_res?;
+                    if !self.rand_msgs.contains_key(&r.party_id) {
+                        self.rand_msgs.insert(r.party_id, vec![]);
+                    }
+                    // write the msg
+                    match self.rand_msgs.get_mut(&r.party_id) {
+                        Some(v) => v.push(r),
+                        None => panic!("rand share for id {} should exist", r.party_id),
+                    }
+                }
+                default => {
+                    break;
+                }
+            }
+        }
+        // not that we're reading the rand msgs in a LIFO order
+        let opt_out = opt_to_res(self.rand_msgs.get_mut(&id))?.pop();
+        opt_to_res(opt_out)
+    }
 
-        // wait for the triple
-        let triple = r.recv_timeout(TIMEOUT)?;
+    fn process_input(&mut self, r0: RegAddr, r1: RegAddr, id: PartyID, s_chan: &Sender<Action>) -> Result<(), SomeError> {
+        let rand_share = self.get_rand_share_for_id(id)?;
+
+        let (s, r) = bounded(1);
+        if self.id == id {
+            let x = opt_to_res(self.reg.clear[r1])?;
+            let e = x - opt_to_res(rand_share.clear_rand)?;
+            s_chan.send(Action::Input(id, Some(e), s))?;
+        }
+
+        let e = r.recv_timeout(TIMEOUT)?;
+        let input_share = rand_share.auth_share.add_const(&e, &self.alpha_share, self.id == id);
+        self.reg.secret[r0] = Some(input_share);
+        Ok(())
+    }
+
+    fn process_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, s_chan: &Sender<Action>) -> Result<(), SomeError> {
+        let triple = self.triple_chan.recv_timeout(TIMEOUT)?;
         self.reg.secret[r0] = Some(triple.0);
         self.reg.secret[r1] = Some(triple.1);
         self.reg.secret[r2] = Some(triple.2);
+        s_chan.send(Action::None)?;
         Ok(())
     }
 
@@ -189,7 +248,6 @@ impl VM {
                 s_chan.send(Action::Open(for_opening.share, s))?;
 
                 // wait for the response
-                // TODO parameterize these timeouts
                 let opened: Fp = r.recv_timeout(TIMEOUT)?;
                 self.reg.clear[to] = Some(opened);
                 Ok(())
@@ -217,27 +275,32 @@ mod tests {
     use num_traits::{One, Zero};
 
     fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
-        let (_, dummy_open_chan) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
-        vm_runner(prog, reg, dummy_open_chan, dummy_triple_chan)
+        let (_, dummy_open_chan) = bounded(5);
+        let (_, dummy_rand_chan) = bounded(5);
+        vm_runner(prog, reg, dummy_triple_chan, dummy_open_chan, dummy_rand_chan)
     }
 
     fn vm_runner(
         prog: Vec<Instruction>,
         reg: Reg,
-        open_chan: Receiver<Fp>,
         triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        rand_chan: Receiver<InputRandMsg>,
+        open_chan: Receiver<Fp>,
     ) -> Result<Vec<Fp>, SomeError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
         let fake_alpha_share = Fp::zero();
-        let handle = VM::spawn(0, fake_alpha_share, reg, r_instruction_chan, s_action_chan);
+        let handle = VM::spawn(0, fake_alpha_share, reg, triple_chan, rand_chan, r_instruction_chan, s_action_chan);
         for instruction in prog {
             s_instruction_chan.send(instruction)?;
             if instruction == Instruction::Stop {
                 break;
             }
+
+            // these replies are obviously not the correct implementation, they're only here for testing
+            // the actual implementation is in node.rs
             let reply = r_action_chan.recv_timeout(TIMEOUT)?;
             match reply {
                 Action::None => (),
@@ -245,10 +308,10 @@ mod tests {
                     let x = open_chan.recv_timeout(TIMEOUT)?;
                     sender.send(x)?
                 }
-                Action::Triple(sender) => {
-                    let triple = triple_chan.recv_timeout(TIMEOUT)?;
-                    sender.send(triple)?
-                }
+                Action::Input(_, e_option, sender) => match e_option {
+                    Some(e) => sender.send(e)?,
+                    None => sender.send(Fp::zero())?,
+                },
                 Action::SOutput(_, sender) => sender.send(Ok(()))?,
             }
         }
@@ -339,10 +402,11 @@ mod tests {
         let prog = vec![Instruction::Open(0, 0), Instruction::COutput(0), Instruction::Stop];
         let reg = unauth_vec_to_reg(&vec![], &vec![Fp::one()]);
 
-        let (s, r) = bounded(5);
         let (_, dummy_triple_chan) = bounded(5);
-        s.send(Fp::zero()).unwrap();
-        let result = vm_runner(prog, reg, r, dummy_triple_chan).unwrap();
+        let (_, dummy_rand_chan) = bounded(5);
+        let (s_open_chan, r_open_chan) = bounded(5);
+        s_open_chan.send(Fp::zero()).unwrap();
+        let result = vm_runner(prog, reg, dummy_triple_chan, dummy_rand_chan, r_open_chan).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], Fp::zero());
     }
@@ -357,7 +421,8 @@ mod tests {
             Instruction::Stop,
         ];
 
-        let (s, r) = bounded(5);
+        let (s_triple_chan, r_triple_chan) = bounded(5);
+        let (_, dummy_rand_chan) = bounded(5);
         let (_, dummy_open_chan) = bounded(5);
         let zero = AuthShare {
             share: Fp::zero(),
@@ -368,12 +433,48 @@ mod tests {
             mac: Fp::one(),
         };
         let two = one + one;
-        s.send((zero, one, two)).unwrap();
-        let result = vm_runner(prog, empty_reg(), dummy_open_chan, r).unwrap();
+        s_triple_chan.send((zero, one, two)).unwrap();
+        let result = vm_runner(prog, empty_reg(), r_triple_chan, dummy_rand_chan, dummy_open_chan).unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], zero.share);
         assert_eq!(result[1], one.share);
         assert_eq!(result[2], two.share);
+    }
+
+    #[test]
+    fn test_input() {
+        let prog = vec![Instruction::Input(0, 0, 0), Instruction::SOutput(0), Instruction::Stop];
+
+        let x = Fp::one();
+        let r = x + x;
+
+        let (_, dummy_triple_chan) = bounded(5);
+        let (s_rand_chan, r_rand_chan) = bounded(5);
+        let (_, dummy_open_chan) = bounded(5);
+
+        let rand_msg = InputRandMsg {
+            auth_share: AuthShare {
+                share: r - Fp::one(),
+                mac: Fp::zero(),
+            },
+            clear_rand: Some(r),
+            party_id: 0,
+        };
+        s_rand_chan.send(rand_msg).unwrap();
+        let result = vm_runner(
+            prog,
+            unauth_vec_to_reg(&vec![x], &vec![]),
+            dummy_triple_chan,
+            r_rand_chan,
+            dummy_open_chan,
+        )
+        .unwrap();
+
+        // for rand_msg, the clear value is r, with a share of r-1
+        // the vm computes e = x - r
+        // then computes r_share + e as the final input sharing
+        assert_eq!(result[0], rand_msg.auth_share.share + (x - r));
+        assert_eq!(result.len(), 1);
     }
 
     // TODO test for failures

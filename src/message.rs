@@ -1,10 +1,13 @@
 use crate::algebra::Fp;
+use crate::crypto;
 use crate::crypto::commit;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::fmt::Debug;
 use std::time::Duration;
+
+pub type PartyID = usize;
 
 pub(crate) fn broadcast<T: Copy + Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T) -> Result<(), SendError<T>> {
     debug!("Broadcasting {:?}", m);
@@ -44,3 +47,12 @@ pub enum NodeMsg {
     Com(commit::Commitment),
     Opening(commit::Opening),
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct InputRandMsg {
+    pub auth_share: crypto::AuthShare,
+    pub clear_rand: Option<Fp>,
+    pub party_id: PartyID,
+}
+
+// TODO define a type for internal message, between vm and node

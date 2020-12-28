@@ -1,7 +1,6 @@
 mod algebra;
 pub mod crypto;
 pub mod error;
-mod fake_prep;
 pub mod message;
 pub mod node;
 pub mod synchronizer;
@@ -65,10 +64,7 @@ mod tests {
         output
     }
 
-    fn create_triple_chans(
-        n: usize,
-        capacity: usize,
-    ) -> Vec<(Sender<(AuthShare, AuthShare, AuthShare)>, Receiver<(AuthShare, AuthShare, AuthShare)>)> {
+    fn create_chans<T>(n: usize, capacity: usize) -> Vec<(Sender<T>, Receiver<T>)> {
         (0..n).map(|_| bounded(capacity)).collect()
     }
 
@@ -88,6 +84,7 @@ mod tests {
     fn integration_test_clear_add() {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (_triple_sender, triple_receiver) = bounded(5);
+        let (_rand_sender, rand_receiver) = bounded(5);
         let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
 
         let one = Fp::one();
@@ -103,6 +100,7 @@ mod tests {
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
+            rand_receiver,
             vec![],
             vec![],
             commit::Scheme {},
@@ -119,6 +117,7 @@ mod tests {
     fn integration_test_triple() {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
         let (triple_sender, triple_receiver) = bounded(5);
+        let (_rand_sender, rand_receiver) = bounded(5);
         let prog = vec![
             vm::Instruction::Triple(0, 1, 2),
             vm::Instruction::SOutput(0),
@@ -148,6 +147,7 @@ mod tests {
             sync_chans_for_node.0[0].clone(),
             sync_chans_for_node.1[0].clone(),
             triple_receiver,
+            rand_receiver,
             vec![],
             vec![],
             commit::Scheme {},
@@ -173,12 +173,41 @@ mod tests {
         let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(n);
         let node_chans = create_node_chans(n);
 
-        // check for the number of triples in prog and generate enough triples for it
-        let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
-        let triple_chans = create_triple_chans(n, triple_count);
-
         let alpha: Fp = rng.gen();
         let alpha_shares = unauth_share(&alpha, n, rng);
+
+        // check for the number of triples in prog and generate enough triples for it
+        let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
+        let triple_chans = create_chans::<(AuthShare, AuthShare, AuthShare)>(n, triple_count);
+        for _ in 0..triple_count {
+            let triple = auth_triple(n, &alpha, rng);
+            for (i, (s, _)) in triple_chans.iter().enumerate() {
+                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
+            }
+        }
+
+        // check for the number of input instructions and generate random shares
+        // TODO this is more rand shares than we need, since we're giving every party max_rand_count number of shares
+        let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
+        let rand_chans = create_chans::<InputRandMsg>(n, max_rand_count * n);
+        for id in 0..n {
+            for _ in 0..max_rand_count {
+                let r: Fp = rng.gen();
+                let auth_shares = auth_share(&r, n, &alpha, rng);
+                let rand_shares: Vec<_> = auth_shares
+                    .iter()
+                    .enumerate()
+                    .map(|(i, share)| InputRandMsg {
+                        auth_share: *share,
+                        clear_rand: if id == i { Some(r) } else { None },
+                        party_id: id,
+                    })
+                    .collect();
+                for (i, (s, _)) in rand_chans.iter().enumerate() {
+                    s.send(rand_shares[i]).unwrap();
+                }
+            }
+        }
 
         let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
         let node_handles: Vec<JoinHandle<_>> = (0..n)
@@ -191,6 +220,7 @@ mod tests {
                     sync_chans_for_node.0[i].clone(),
                     sync_chans_for_node.1[i].clone(),
                     triple_chans[i].1.clone(),
+                    rand_chans[i].1.clone(),
                     get_row(&node_chans, i).into_iter().map(|(s, _)| s).collect(),
                     get_col(&node_chans, i).into_iter().map(|(_, r)| r).collect(),
                     commit::Scheme {},
@@ -199,13 +229,6 @@ mod tests {
                 node_handle
             })
             .collect();
-
-        for _ in 0..triple_count {
-            let triple = auth_triple(n, &alpha, rng);
-            for (i, (s, _)) in triple_chans.iter().enumerate() {
-                s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
-            }
-        }
 
         let mut output_shares = Vec::new();
         for h in node_handles {
