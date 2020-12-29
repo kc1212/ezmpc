@@ -6,7 +6,7 @@ use crate::message::*;
 use crate::vm;
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
-use log::debug;
+use log::{debug, error};
 use num_traits::Zero;
 use rand::{SeedableRng, StdRng};
 use std::thread;
@@ -88,11 +88,8 @@ impl Node {
         let bcast = |m| broadcast(&self.s_node_chan, m);
         let recv = || recv_all(&self.r_node_chan, TIMEOUT);
 
-        let mut maccheck = |share: AuthShare, sender: Sender<Result<(), OutputError>>| -> Result<(), SomeError> {
-            // TODO check all partially opened values
-            // open x
-            bcast(NodeMsg::Elem(share.share))?;
-            let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
+        // TODO understand why this need to be mutable
+        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, SomeError> {
             // let d = alpha_i * x - mac_i
             let d = alpha_share * x - share.mac;
             // commit d
@@ -107,24 +104,25 @@ impl Node {
             // and check they sum to 0
             let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
             let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
+
+            // this is a weird kind of type but it makes categorizing the errors easier
             if !coms_ok {
-                sender.send(Err(OutputError::BadCommitment))?;
+                Ok(Err(OutputError::BadCommitment))
             } else if !zero_ok {
-                sender.send(Err(OutputError::SumIsNotZero))?;
+                Ok(Err(OutputError::SumIsNotZero))
             } else {
-                sender.send(Ok(()))?;
+                Ok(Ok(()))
             }
-            Ok(())
         };
 
         // wait for start
         loop {
             let msg = self.r_sync_chan.recv()?;
             if msg == SyncMsg::Start {
-                debug!("Starting");
+                debug!("[{}] Starting", id);
                 break;
             } else {
-                debug!("Received {:?} while waiting to start", msg);
+                debug!("[{}] Received {:?} while waiting to start", id, msg);
             }
         }
 
@@ -147,7 +145,7 @@ impl Node {
                             }
                             let instruction = prog[pc];
                             pc += 1;
-                            debug!("Sending instruction {:?} to VM", instruction);
+                            debug!("[{}] Sending instruction {:?} to VM", id, instruction);
                             s_inst_chan.send(instruction)?;
 
                             if instruction == vm::Instruction::Stop {
@@ -155,12 +153,13 @@ impl Node {
                                 break;
                             } else {
                                 let action = r_action_chan.recv_timeout(TIMEOUT)?;
-                                debug!("Received action {:?} from VM", action);
+                                debug!("[{}], Received action {:?} from VM", id, action);
                                 match action {
                                     vm::Action::None => (),
                                     vm::Action::Open(x, sender) => {
                                         bcast(NodeMsg::Elem(x))?;
                                         let result = recv()?.iter().map(unwrap_elem_msg).sum();
+                                        debug!("[{}] Partially opened {:?}", id, result);
                                         sender.send(result)?
                                     }
                                     vm::Action::Input(id, e_option, sender) => {
@@ -171,9 +170,31 @@ impl Node {
                                         let e = unwrap_elem_msg(&self.r_node_chan[id].recv_timeout(TIMEOUT)?);
                                         sender.send(e)?
                                     }
-                                    vm::Action::SOutput(share, sender) => {
-                                        // TODO check all partially opened values
-                                        maccheck(share, sender)?
+                                    vm::Action::SOutput(share, mut openings, sender) => {
+                                        // open the first share, the rest are already opened
+                                        bcast(NodeMsg::Elem(share.share))?;
+                                        let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
+                                        debug!("[{}] Partially opened {:?}", id, x);
+
+                                        // mac_check everything and send error on first failure
+                                        let mut ok = true;
+                                        openings.push((x, share));
+                                        for (x, opening) in openings {
+                                            match mac_check(&x, &opening)? {
+                                                Ok(()) => {}
+                                                e => {
+                                                    error!("[{}] MAC check failed: {:?}", id, e);
+                                                    sender.send(e)?;
+                                                    ok = false;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if ok {
+                                            debug!("[{}] All MAC check ok", id);
+                                            sender.send(Ok(()))?;
+                                        }
                                     }
                                 }
                                 self.s_sync_chan.send(SyncMsgReply::Ok)?;

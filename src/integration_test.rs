@@ -233,6 +233,8 @@ fn integration_test_mul() {
     // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
     let n = 3;
     let prog = vec![
+        vm::Instruction::Input(0, 0, 0),     // input [x]
+        vm::Instruction::Input(1, 1, 1),     // input [y]
         vm::Instruction::Triple(2, 3, 4),    // [a], [b], [c]
         vm::Instruction::SSub(5, 0, 2),      // [e] <- [x] - [a]
         vm::Instruction::SSub(6, 1, 3),      // [d] <- [y] - [b]
@@ -249,37 +251,40 @@ fn integration_test_mul() {
     ];
 
     let rng = &mut StdRng::from_seed(&TEST_SEED);
-    let x: Fp = rng.gen();
-    let y: Fp = rng.gen();
-    let expected = vec![x * y];
+    let input_0: Fp = rng.gen();
+    let input_1: Fp = rng.gen();
+    let expected = vec![input_0 * input_1];
 
-    let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&x, n, rng), fake_auth_share(&y, n, rng)])
-        .iter()
-        .map(|v| vm::vec_to_reg(&vec![], v))
-        .collect();
-
+    let regs = vec![
+        vm::vec_to_reg(&vec![input_0, Fp::zero()], &vec![]),
+        vm::vec_to_reg(&vec![Fp::zero(), input_1], &vec![]),
+        vm::empty_reg(),
+    ];
     generic_integration_test(n, prog, regs, expected, rng);
 }
 
 #[test]
-fn integration_test_input() {
+fn integration_test_input_output() {
     let n = 3;
     let prog = vec![
         vm::Instruction::Input(0, 0, 0),
         vm::Instruction::Input(1, 1, 1),
-        vm::Instruction::SOutput(0),
-        vm::Instruction::SOutput(1),
+        vm::Instruction::Input(2, 2, 2),
+        vm::Instruction::COutput(0),
+        vm::Instruction::COutput(1),
+        vm::Instruction::SOutput(2),
         vm::Instruction::Stop,
     ];
 
     let rng = &mut StdRng::from_seed(&TEST_SEED);
     let input_0: Fp = rng.gen();
     let input_1: Fp = rng.gen();
-    let expected = vec![input_0, input_1];
+    let input_2: Fp = rng.gen();
+    let expected = vec![input_0, input_1, input_2];
     let regs = vec![
-        vm::vec_to_reg(&vec![input_0, Fp::zero()], &vec![]),
-        vm::vec_to_reg(&vec![Fp::zero(), input_1], &vec![]),
-        vm::empty_reg(),
+        vm::vec_to_reg(&vec![input_0, Fp::zero(), Fp::zero()], &vec![]),
+        vm::vec_to_reg(&vec![Fp::zero(), input_1, Fp::zero()], &vec![]),
+        vm::vec_to_reg(&vec![Fp::zero(), Fp::zero(), input_2], &vec![]),
     ];
     generic_integration_test(n, prog, regs, expected, rng);
 }

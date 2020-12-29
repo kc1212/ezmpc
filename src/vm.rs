@@ -28,7 +28,7 @@ pub struct VM {
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
     rand_chan: Receiver<InputRandMsg>,
     rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
-    partial_openings: Vec<AuthShare>,
+    partial_openings: Vec<(Fp, AuthShare)>,
 }
 
 pub fn empty_reg() -> Reg {
@@ -69,7 +69,7 @@ pub enum Action {
     None,
     Open(Fp, Sender<Fp>),
     Input(PartyID, Option<Fp>, Sender<Fp>),
-    SOutput(AuthShare, Sender<Result<(), OutputError>>),
+    SOutput(AuthShare, Vec<(Fp, AuthShare)>, Sender<Result<(), OutputError>>),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -147,6 +147,7 @@ impl VM {
                 Instruction::Input(r0, r1, id) => self.process_input(r0, r1, id, &s_chan)?,
                 Instruction::Triple(r0, r1, r2) => self.process_triple(r0, r1, r2, &s_chan)?,
                 Instruction::Open(to, from) => self.process_open(to, from, &s_chan)?,
+                // TODO output instructions should just store the clear value, instead of secret shared
                 Instruction::COutput(reg) => {
                     output.push(opt_to_res(self.reg.clear[reg])?);
                     s_chan.send(Action::None)?
@@ -256,7 +257,7 @@ impl VM {
                 self.reg.clear[to] = Some(opened);
 
                 // store the opened value for maccheck later
-                self.partial_openings.push(for_opening);
+                self.partial_openings.push((opened, for_opening));
                 Ok(())
             }
         }
@@ -268,10 +269,11 @@ impl VM {
             Some(x) => Ok(x),
         }?;
         let (s, r) = bounded(5);
-        s_chan.send(Action::SOutput(share, s))?;
+        s_chan.send(Action::SOutput(share, self.partial_openings.clone(), s))?;
 
-        // wait for response
+        // wait for response and clear the partial opening vector
         r.recv_timeout(TIMEOUT)??;
+        self.partial_openings.clear();
         Ok(share.share)
     }
 }
@@ -319,7 +321,7 @@ mod tests {
                     Some(e) => sender.send(e)?,
                     None => sender.send(Fp::zero())?,
                 },
-                Action::SOutput(_, sender) => sender.send(Ok(()))?,
+                Action::SOutput(_, _, sender) => sender.send(Ok(()))?,
             }
         }
 
