@@ -88,6 +88,35 @@ impl Node {
         let bcast = |m| broadcast(&self.s_node_chan, m);
         let recv = || recv_all(&self.r_node_chan, TIMEOUT);
 
+        let mut maccheck = |share: AuthShare, sender: Sender<Result<(), OutputError>>| -> Result<(), SomeError> {
+            // TODO check all partially opened values
+            // open x
+            bcast(NodeMsg::Elem(share.share))?;
+            let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
+            // let d = alpha_i * x - mac_i
+            let d = alpha_share * x - share.mac;
+            // commit d
+            let (d_com, d_open) = self.com_scheme.commit(d, rng);
+            bcast(NodeMsg::Com(d_com))?;
+            // get commitment from others
+            let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
+            // commit-open d and collect them
+            bcast(NodeMsg::Opening(d_open))?;
+            let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
+            // verify all the commitments of d
+            // and check they sum to 0
+            let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
+            let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
+            if !coms_ok {
+                sender.send(Err(OutputError::BadCommitment))?;
+            } else if !zero_ok {
+                sender.send(Err(OutputError::SumIsNotZero))?;
+            } else {
+                sender.send(Ok(()))?;
+            }
+            Ok(())
+        };
+
         // wait for start
         loop {
             let msg = self.r_sync_chan.recv()?;
@@ -130,7 +159,6 @@ impl Node {
                                 match action {
                                     vm::Action::None => (),
                                     vm::Action::Open(x, sender) => {
-                                        // TODO add partially opened values to be checked by SOutput
                                         bcast(NodeMsg::Elem(x))?;
                                         let result = recv()?.iter().map(unwrap_elem_msg).sum();
                                         sender.send(result)?
@@ -145,30 +173,7 @@ impl Node {
                                     }
                                     vm::Action::SOutput(share, sender) => {
                                         // TODO check all partially opened values
-                                        // open x
-                                        bcast(NodeMsg::Elem(share.share))?;
-                                        let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
-                                        // let d = alpha_i * x - mac_i
-                                        let d = alpha_share * x - share.mac;
-                                        // commit d
-                                        let (d_com, d_open) = self.com_scheme.commit(d, rng);
-                                        bcast(NodeMsg::Com(d_com))?;
-                                        // get commitment from others
-                                        let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
-                                        // commit-open d and collect them
-                                        bcast(NodeMsg::Opening(d_open))?;
-                                        let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
-                                        // verify all the commitments of d
-                                        // and check they sum to 0
-                                        let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
-                                        let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
-                                        if !coms_ok {
-                                            sender.send(Err(OutputError::BadCommitment))?;
-                                        } else if !zero_ok {
-                                            sender.send(Err(OutputError::SumIsNotZero))?;
-                                        } else {
-                                            sender.send(Ok(()))?;
-                                        }
+                                        maccheck(share, sender)?
                                     }
                                 }
                                 self.s_sync_chan.send(SyncMsgReply::Ok)?;

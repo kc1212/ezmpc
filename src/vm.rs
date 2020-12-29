@@ -28,6 +28,7 @@ pub struct VM {
     triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
     rand_chan: Receiver<InputRandMsg>,
     rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
+    partial_openings: Vec<AuthShare>,
 }
 
 pub fn empty_reg() -> Reg {
@@ -125,6 +126,7 @@ impl VM {
             triple_chan,
             rand_chan,
             rand_msgs: HashMap::new(),
+            partial_openings: Vec::new(),
         }
     }
 
@@ -252,6 +254,9 @@ impl VM {
                 // wait for the response
                 let opened: Fp = r.recv_timeout(TIMEOUT)?;
                 self.reg.clear[to] = Some(opened);
+
+                // store the opened value for maccheck later
+                self.partial_openings.push(for_opening);
                 Ok(())
             }
         }
