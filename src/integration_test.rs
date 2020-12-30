@@ -218,9 +218,10 @@ fn integration_test_open() {
     let n = 3;
     let prog = vec![vm::Instruction::Open(1, 0), vm::Instruction::COutput(1), vm::Instruction::Stop];
 
+    //  TODO this function will fail if we do the MAC check at Instruction::Stop too
     let rng = &mut StdRng::from_seed(&TEST_SEED);
     let zero = Fp::zero();
-    let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&zero, n, rng)])
+    let regs: Vec<vm::Reg> = transpose(&vec![auth_share(&zero, n, &Fp::zero(), rng)])
         .iter()
         .map(|v| vm::Reg::from_vec(&vec![], v))
         .collect();

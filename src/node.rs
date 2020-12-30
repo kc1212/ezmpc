@@ -1,7 +1,7 @@
 use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
-use crate::error::{OutputError, SomeError, TIMEOUT};
+use crate::error::{MPCError, OutputError, TIMEOUT};
 use crate::message::*;
 use crate::vm;
 
@@ -36,7 +36,7 @@ impl Node {
         r_node_chan: Vec<Receiver<NodeMsg>>,
         com_scheme: commit::Scheme,
         rng_seed: [usize; 4],
-    ) -> JoinHandle<Result<Vec<Fp>, SomeError>> {
+    ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
             let mut s = Node {
                 s_sync_chan,
@@ -51,7 +51,7 @@ impl Node {
         })
     }
 
-    fn listen(&mut self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, SomeError> {
+    fn listen(&mut self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
         // init forwarding channels
@@ -89,7 +89,7 @@ impl Node {
         let recv = || recv_all(&self.r_node_chan, TIMEOUT);
 
         // TODO understand why this need to be mutable
-        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, SomeError> {
+        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, MPCError> {
             // let d = alpha_i * x - mac_i
             let d = alpha_share * x - share.mac;
             // commit d

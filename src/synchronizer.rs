@@ -1,4 +1,4 @@
-use crate::error::{SomeError, TIMEOUT};
+use crate::error::{MPCError, TIMEOUT};
 use crate::message::*;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
@@ -11,7 +11,7 @@ pub struct Synchronizer {
 }
 
 impl Synchronizer {
-    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncMsgReply>>) -> JoinHandle<Result<(), SomeError>> {
+    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncMsgReply>>) -> JoinHandle<Result<(), MPCError>> {
         thread::spawn(move || {
             let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
@@ -28,7 +28,7 @@ impl Synchronizer {
         recv_all(&self.r_chans, TIMEOUT)
     }
 
-    fn listen(&self) -> Result<(), SomeError> {
+    fn listen(&self) -> Result<(), MPCError> {
         self.broadcast(SyncMsg::Next)?;
         loop {
             let msgs = self.recv_all()?;

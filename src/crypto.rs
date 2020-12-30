@@ -4,6 +4,7 @@ use auto_ops::*;
 use num_traits::Zero;
 use rand::Rng;
 
+/// This structure represents an authenticated share.
 #[derive(Copy, Clone, Debug)]
 pub struct AuthShare {
     pub share: Fp,
@@ -11,14 +12,18 @@ pub struct AuthShare {
 }
 
 impl AuthShare {
-    pub fn mul_const(&self, rhs: &Fp) -> Self {
+    /// This function multiplies an authenticated share by a clear value.
+    pub fn mul_clear(&self, rhs: &Fp) -> Self {
         Self {
             share: self.share * *rhs,
             mac: self.mac * *rhs,
         }
     }
 
-    pub fn add_const(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
+    /// This function adds an authenticated share by a clear value.
+    /// Due to the way sharing works, only one party should have `update_share` to `true`,
+    /// otherwise the new share will be wrong.
+    pub fn add_clear(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
         let mut out = self.clone();
         if update_share {
             out.share += *rhs;
@@ -42,6 +47,8 @@ impl_op_ex!(-|a: &AuthShare, b: &AuthShare| -> AuthShare {
     }
 });
 
+/// Share a field element `secret` into `n` shares.
+/// Use the authenticated version of this function `auth_share` unless there is a very specific reason.
 pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     let mut out: Vec<Fp> = vec![Fp::zero(); n];
     let mut sum = Fp::zero();
@@ -56,6 +63,8 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     out
 }
 
+/// Reconstruct shares of a field element into the original one.
+/// Use the authenticated version of this function `auth_combine` unless there is a very specific reason.
 pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
     let mut out = Fp::zero();
     for share in shares {
@@ -64,6 +73,8 @@ pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
     out
 }
 
+/// Generate a sharing of a random triple for `n` parties.
+/// Use the authenticated version of this function `auth_triple` unless there is a very specific reason.
 pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>) {
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
@@ -71,6 +82,8 @@ pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>
     (unauth_share(&a, n, rng), unauth_share(&b, n, rng), unauth_share(&c, n, rng))
 }
 
+/// Share a field element `secret` into `n` shares,
+/// where `alpha` is the global MAC key.
 pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<AuthShare> {
     let mac_on_secret = *secret * *alpha;
     let reg_shares = unauth_share(&secret, n, rng);
@@ -83,10 +96,7 @@ pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<
         .collect()
 }
 
-pub fn fake_auth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<AuthShare> {
-    auth_share(secret, n, &Fp::zero(), rng)
-}
-
+/// Generate a sharing of a random triple for `n` parties where `alpha` is the global MAC key.
 pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
@@ -98,10 +108,6 @@ pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>,
     )
 }
 
-pub fn fake_auth_triple(n: usize, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
-    auth_triple(n, &Fp::zero(), rng)
-}
-
 pub mod commit {
     use crate::algebra::{to_le_bytes, Fp};
 
@@ -110,6 +116,7 @@ pub mod commit {
     use sha3::Digest;
     use std::fmt;
 
+    /// This is the structure that represents a commitment.
     #[derive(Copy, Clone)]
     pub struct Commitment {
         c: [u8; 32],
@@ -123,6 +130,7 @@ pub mod commit {
         }
     }
 
+    /// This is the structure that represents an opening of a commitment.
     #[derive(Copy, Clone)]
     pub struct Opening {
         v: Fp,
@@ -139,6 +147,7 @@ pub mod commit {
     }
 
     impl Opening {
+        /// Returns the committed value.
         pub fn get_v(&self) -> Fp {
             self.v
         }
@@ -150,6 +159,7 @@ pub mod commit {
     }
 
     impl Scheme {
+        /// Generates a commitment for `secret` and an opening.
         pub fn commit(&self, secret: Fp, rng: &mut impl Rng) -> (Commitment, Opening) {
             let r: [u8; 32] = rng.gen();
             let v = to_le_bytes(&secret);
@@ -160,6 +170,7 @@ pub mod commit {
             (Commitment { c }, Opening { v: secret, r })
         }
 
+        /// Use the commitment `com` and the opening `opening` to verify whether the committer honestly opened its value.
         pub fn verify(&self, opening: &Opening, com: &Commitment) -> bool {
             let mut hasher = sha3::Sha3_256::new();
             let v = to_le_bytes(&opening.v);
@@ -294,14 +305,14 @@ mod tests {
         assert_eq!(a - b, auth_combine(&a_sub_b_shares, &alpha_shares));
 
         // check mul by constant
-        let mul_const_shares: Vec<_> = a_shares.iter().map(|share| share.mul_const(&const_c)).collect();
+        let mul_const_shares: Vec<_> = a_shares.iter().map(|share| share.mul_clear(&const_c)).collect();
         assert_eq!(a * const_c, auth_combine(&mul_const_shares, &alpha_shares));
 
         // check add by constant
         let add_const_shares: Vec<_> = b_shares
             .iter()
             .enumerate()
-            .map(|(i, share)| share.add_const(&const_c, &alpha_shares[i], i == 0))
+            .map(|(i, share)| share.add_clear(&const_c, &alpha_shares[i], i == 0))
             .collect();
         assert_eq!(b + const_c, auth_combine(&add_const_shares, &alpha_shares));
     }
@@ -349,9 +360,9 @@ mod tests {
 
         let z_boxes: Vec<_> = izip!(0..n, &alpha_shares, &c_boxes, &b_boxes, &a_boxes)
             .map(|(i, alpha_share, c_box, b_box, a_box)| {
-                let eb_box = b_box.mul_const(&e);
-                let da_box = a_box.mul_const(&d);
-                (c_box + eb_box + da_box).add_const(&ed, alpha_share, i == 0)
+                let eb_box = b_box.mul_clear(&e);
+                let da_box = a_box.mul_clear(&d);
+                (c_box + eb_box + da_box).add_clear(&ed, alpha_share, i == 0)
             })
             .collect();
 

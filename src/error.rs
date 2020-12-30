@@ -10,6 +10,7 @@ use thiserror::Error;
 
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
 
+/// `OutputError` describes the different failure states when outputting a secret value.
 #[derive(Debug)]
 pub enum OutputError {
     RegisterEmpty,
@@ -25,8 +26,12 @@ impl fmt::Display for OutputError {
 
 impl std::error::Error for OutputError {}
 
+/// `MPCError` is a wrapper for all the errors in this software to make error handling easier.
+/// We do not use a generic parameter for the `SendError`s
+/// so that functions that return `Result` also do not need a generic parameter,
+/// making it a bit more user-friendly.
 #[derive(Error, Debug)]
-pub enum SomeError {
+pub enum MPCError {
     #[error("empty register")]
     EmptyError,
     #[error(transparent)]
