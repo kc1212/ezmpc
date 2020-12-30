@@ -15,6 +15,18 @@ const P: FpRepr = 18446744073709551557;
 #[alga_quickcheck]
 pub struct Fp(FpRepr); // we can only hold 64-bit values
 
+impl From<u128> for Fp {
+    fn from(x: u128) -> Self {
+        Fp(x)
+    }
+}
+
+impl From<usize> for Fp {
+    fn from(x: usize) -> Self {
+        Fp(x as u128)
+    }
+}
+
 impl AbsDiffEq for Fp {
     type Epsilon = Fp;
     fn default_epsilon() -> Fp {
