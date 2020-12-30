@@ -121,7 +121,7 @@ impl Node {
                 let action = r_action_chan.recv_timeout(TIMEOUT)?;
                 debug!("[{}], Received action {:?} from VM", id, action);
                 match action {
-                    vm::Action::None => {
+                    vm::Action::Next => {
                         break;
                     }
                     vm::Action::Open(x, sender) => {
@@ -193,14 +193,15 @@ impl Node {
                             }
                             let instruction = prog[pc];
                             pc += 1;
+
                             debug!("[{}] Sending instruction {:?} to VM", id, instruction);
                             s_inst_chan.send(instruction)?;
+                            handle_action()?;
 
                             if instruction == vm::Instruction::Stop {
                                 self.s_sync_chan.send(SyncMsgReply::Done)?;
                                 break;
                             } else {
-                                handle_action()?;
                                 self.s_sync_chan.send(SyncMsgReply::Ok)?;
                             }
                         },

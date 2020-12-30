@@ -58,12 +58,16 @@ pub struct VM {
     partial_openings: Vec<(Fp, AuthShare)>,
 }
 
-// might be a problem for error handling if we cannot derive Eq/PartialEq
+/// These are the possible action items that the VM cannot handle by itself.
 #[derive(Clone, Debug)]
 pub enum Action {
-    None,
+    /// Ask for the next instruction.
+    Next,
+    /// Partially open the share.
     Open(Fp, Sender<Fp>),
+    /// Secret share an input.
     Input(PartyID, Option<Fp>, Sender<Fp>),
+    /// Perform the MAC check.
     Check(Vec<(Fp, AuthShare)>, Sender<Result<(), OutputError>>),
 }
 
@@ -158,11 +162,15 @@ impl VM {
                     output.push(result);
                 }
                 Instruction::Stop => {
-                    // TODO do the MAC check here too if there are still items left in self.partial_openings
+                    if !self.partial_openings.is_empty() {
+                        self.do_mac_check(&s_chan)?;
+                    }
+                    // need to send a next before we return to say we're done with this instruction
+                    s_chan.send(Action::Next)?;
                     return Ok(output);
                 }
             }
-            s_chan.send(Action::None)?;
+            s_chan.send(Action::Next)?;
         }
     }
 
@@ -281,6 +289,11 @@ impl VM {
             }
         }?;
 
+        self.do_mac_check(s_chan)?;
+        Ok(share.share)
+    }
+
+    fn do_mac_check(&mut self, s_chan: &Sender<Action>) -> Result<(), MPCError> {
         // next do the mac_check
         let (s, r) = bounded(5);
         s_chan.send(Action::Check(self.partial_openings.clone(), s))?;
@@ -288,7 +301,7 @@ impl VM {
         // wait for response and clear the partial opening vector
         r.recv_timeout(TIMEOUT)??;
         self.partial_openings.clear();
-        Ok(share.share)
+        Ok(())
     }
 }
 
@@ -314,6 +327,7 @@ mod tests {
         vm_runner(prog, reg, dummy_triple_chan, dummy_rand_chan)
     }
 
+    // TODO return additional information for testing, e.g., how many MAC check we did
     fn vm_runner(
         prog: Vec<Instruction>,
         reg: Reg,
@@ -327,16 +341,13 @@ mod tests {
         let handle = VM::spawn(0, fake_alpha_share, reg, triple_chan, rand_chan, r_instruction_chan, s_action_chan);
         for instruction in prog {
             s_instruction_chan.send(instruction)?;
-            if instruction == Instruction::Stop {
-                break;
-            }
 
             loop {
                 // these replies are obviously not the correct implementation, they're only here for testing
                 // the actual implementation is in node.rs
                 let reply = r_action_chan.recv_timeout(TIMEOUT)?;
                 match reply {
-                    Action::None => {
+                    Action::Next => {
                         break;
                     }
                     Action::Open(x, sender) => sender.send(x)?,
@@ -346,6 +357,10 @@ mod tests {
                     },
                     Action::Check(_, sender) => sender.send(Ok(()))?,
                 }
+            }
+
+            if instruction == Instruction::Stop {
+                break;
             }
         }
 

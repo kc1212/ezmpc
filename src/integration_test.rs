@@ -216,17 +216,18 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
 #[test]
 fn integration_test_open() {
     let n = 3;
-    let prog = vec![vm::Instruction::Open(1, 0), vm::Instruction::COutput(1), vm::Instruction::Stop];
+    let prog = vec![
+        vm::Instruction::Input(0, 0, 0),
+        vm::Instruction::Open(1, 0),
+        vm::Instruction::COutput(1),
+        vm::Instruction::Stop,
+    ];
 
-    //  TODO this function will fail if we do the MAC check at Instruction::Stop too
     let rng = &mut StdRng::from_seed(&TEST_SEED);
-    let zero = Fp::zero();
-    let regs: Vec<vm::Reg> = transpose(&vec![auth_share(&zero, n, &Fp::zero(), rng)])
-        .iter()
-        .map(|v| vm::Reg::from_vec(&vec![], v))
-        .collect();
-
-    generic_integration_test(n, prog, regs, vec![zero], rng);
+    let secret = rng.gen();
+    let expected = vec![secret * Fp::from(n)]; // every party outputs the secret, so the expected sum is secret*n
+    let regs = vec![vm::Reg::from_vec(&vec![secret], &vec![]), vm::Reg::empty(), vm::Reg::empty()];
+    generic_integration_test(n, prog, regs, expected, rng);
 }
 
 #[test]
