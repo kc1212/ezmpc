@@ -4,7 +4,6 @@ use crate::error::{OutputError, SomeError, TIMEOUT};
 use crate::message::{InputRandMsg, PartyID};
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
-use num_traits::Zero;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::ops;
@@ -13,14 +12,42 @@ use std::thread::JoinHandle;
 
 type RegAddr = usize;
 
+/// Reg is the register stored by the VM.
 #[derive(Copy, Clone, Debug)]
 pub struct Reg {
     clear: [Option<Fp>; REG_SIZE],
     secret: [Option<AuthShare>; REG_SIZE],
 }
 
+impl Reg {
+    /// Construct an empty register.
+    pub fn empty() -> Reg {
+        Reg {
+            clear: [None; REG_SIZE],
+            secret: [None; REG_SIZE],
+        }
+    }
+
+    /// Construct a register from a vector of clear values and authenticated secret shares.
+    pub fn from_vec(vclear: &Vec<Fp>, vsecret: &Vec<AuthShare>) -> Reg {
+        let mut clear = [None; REG_SIZE];
+        let mut secret = [None; REG_SIZE];
+        let cn = min(vclear.len(), REG_SIZE);
+        for i in 0..cn {
+            clear[i] = Some(vclear[i]);
+        }
+        let sn = min(vsecret.len(), REG_SIZE);
+        for i in 0..sn {
+            secret[i] = Some(vsecret[i]);
+        }
+        Reg { clear, secret }
+    }
+}
+
 const REG_SIZE: usize = 128;
 
+/// The stateful virtual machine that execute instructions defined in `Instruction`.
+/// It communicates with the outside world using channels if it needs additional information.
 pub struct VM {
     id: PartyID,
     alpha_share: Fp, // could be a reference type
@@ -29,38 +56,6 @@ pub struct VM {
     rand_chan: Receiver<InputRandMsg>,
     rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
     partial_openings: Vec<(Fp, AuthShare)>,
-}
-
-pub fn empty_reg() -> Reg {
-    Reg {
-        clear: [None; REG_SIZE],
-        secret: [None; REG_SIZE],
-    }
-}
-
-pub fn vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<AuthShare>) -> Reg {
-    let mut clear = [None; REG_SIZE];
-    let mut secret = [None; REG_SIZE];
-    let cn = min(vclear.len(), REG_SIZE);
-    for i in 0..cn {
-        clear[i] = Some(vclear[i]);
-    }
-    let sn = min(vsecret.len(), REG_SIZE);
-    for i in 0..sn {
-        secret[i] = Some(vsecret[i]);
-    }
-    Reg { clear, secret }
-}
-
-pub fn unauth_vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<Fp>) -> Reg {
-    let vv: Vec<_> = vsecret
-        .iter()
-        .map(|x| AuthShare {
-            share: *x,
-            mac: Zero::zero(),
-        })
-        .collect();
-    vec_to_reg(vclear, &vv)
 }
 
 // might be a problem for error handling if we cannot derive Eq/PartialEq
@@ -72,6 +67,12 @@ pub enum Action {
     SOutput(AuthShare, Vec<(Fp, AuthShare)>, Sender<Result<(), OutputError>>),
 }
 
+/// These are the instructions for the VM.
+/// We use the prefix `C`, `S` and `M` to denote different types of operation.
+/// * `C` (e.g. `CAdd`): These operate on clear registers.
+/// * `S` (e.g. `SAdd`): These operate on secret registers.
+/// * `M` (e.g. `MAdd`): These operate on secret and clear registers.
+/// Most instructions store the result in the register of the first operand.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Instruction {
     CAdd(RegAddr, RegAddr, RegAddr),          // clear add
@@ -97,6 +98,10 @@ fn opt_to_res<T>(v: Option<T>) -> Result<T, SomeError> {
 }
 
 impl VM {
+    /// Spawns a new VM thread and returns its handler.
+    /// This function assumes all the VMs have a unique `id`,
+    /// the global MAC key share (`alpha_share`) is correct and that
+    /// the channels are not disconnected before calling `.join` on the returned handler.
     pub fn spawn(
         id: PartyID,
         alpha_share: Fp,
@@ -283,6 +288,17 @@ mod tests {
     use super::*;
     use num_traits::Zero;
 
+    fn unauth_vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<Fp>) -> Reg {
+        let vv: Vec<_> = vsecret
+            .iter()
+            .map(|x| AuthShare {
+                share: *x,
+                mac: Zero::zero(),
+            })
+            .collect();
+        Reg::from_vec(vclear, &vv)
+    }
+
     fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, SomeError> {
         let (_, dummy_triple_chan) = bounded(5);
         let (_, dummy_open_chan) = bounded(5);
@@ -344,7 +360,7 @@ mod tests {
         F: Fn(RegAddr, RegAddr, RegAddr) -> Instruction,
     {
         let prog = vec![op(2, 1, 0), Instruction::COutput(2), Instruction::Stop];
-        let reg = vec_to_reg(&vec![a, b], &vec![]);
+        let reg = Reg::from_vec(&vec![a, b], &vec![]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0]
@@ -441,7 +457,7 @@ mod tests {
         let b_share = AuthShare { share: b, mac: Fp::zero() };
         let c_share = AuthShare { share: c, mac: Fp::zero() };
         s_triple_chan.send((a_share, b_share, c_share)).unwrap();
-        let result = vm_runner(prog, empty_reg(), r_triple_chan, dummy_rand_chan, dummy_open_chan).unwrap();
+        let result = vm_runner(prog, Reg::empty(), r_triple_chan, dummy_rand_chan, dummy_open_chan).unwrap();
         result.len() == 3 && result[0] == a_share.share && result[1] == b_share.share && result[2] == c_share.share
     }
 

@@ -67,7 +67,7 @@ fn integration_test_clear_add() {
     let node_handle = Node::spawn(
         0,
         fake_alpha_share,
-        vm::vec_to_reg(&vec![one, one], &vec![]),
+        vm::Reg::from_vec(&vec![one, one], &vec![]),
         prog,
         sync_chans_for_node.0[0].clone(),
         sync_chans_for_node.1[0].clone(),
@@ -114,7 +114,7 @@ fn integration_test_triple() {
     let node_handle = Node::spawn(
         0,
         fake_alpha_share,
-        vm::empty_reg(),
+        vm::Reg::empty(),
         prog,
         sync_chans_for_node.0[0].clone(),
         sync_chans_for_node.1[0].clone(),
@@ -222,7 +222,7 @@ fn integration_test_open() {
     let zero = Fp::zero();
     let regs: Vec<vm::Reg> = transpose(&vec![fake_auth_share(&zero, n, rng)])
         .iter()
-        .map(|v| vm::vec_to_reg(&vec![], v))
+        .map(|v| vm::Reg::from_vec(&vec![], v))
         .collect();
 
     generic_integration_test(n, prog, regs, vec![zero], rng);
@@ -256,9 +256,9 @@ fn integration_test_mul() {
     let expected = vec![input_0 * input_1];
 
     let regs = vec![
-        vm::vec_to_reg(&vec![input_0, Fp::zero()], &vec![]),
-        vm::vec_to_reg(&vec![Fp::zero(), input_1], &vec![]),
-        vm::empty_reg(),
+        vm::Reg::from_vec(&vec![input_0, Fp::zero()], &vec![]),
+        vm::Reg::from_vec(&vec![Fp::zero(), input_1], &vec![]),
+        vm::Reg::empty(),
     ];
     generic_integration_test(n, prog, regs, expected, rng);
 }
@@ -282,9 +282,9 @@ fn integration_test_input_output() {
     let input_2: Fp = rng.gen();
     let expected = vec![input_0, input_1, input_2];
     let regs = vec![
-        vm::vec_to_reg(&vec![input_0, Fp::zero(), Fp::zero()], &vec![]),
-        vm::vec_to_reg(&vec![Fp::zero(), input_1, Fp::zero()], &vec![]),
-        vm::vec_to_reg(&vec![Fp::zero(), Fp::zero(), input_2], &vec![]),
+        vm::Reg::from_vec(&vec![input_0, Fp::zero(), Fp::zero()], &vec![]),
+        vm::Reg::from_vec(&vec![Fp::zero(), input_1, Fp::zero()], &vec![]),
+        vm::Reg::from_vec(&vec![Fp::zero(), Fp::zero(), input_2], &vec![]),
     ];
     generic_integration_test(n, prog, regs, expected, rng);
 }
