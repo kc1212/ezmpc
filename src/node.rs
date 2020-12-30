@@ -88,7 +88,7 @@ impl Node {
         let bcast = |m| broadcast(&self.s_node_chan, m);
         let recv = || recv_all(&self.r_node_chan, TIMEOUT);
 
-        // TODO understand why this need to be mutable
+        // perform one MAC check
         let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, MPCError> {
             // let d = alpha_i * x - mac_i
             let d = alpha_share * x - share.mac;
@@ -113,6 +113,54 @@ impl Node {
             } else {
                 Ok(Ok(()))
             }
+        };
+
+        // handle action items from the VM
+        let mut handle_action = || -> Result<(), MPCError> {
+            loop {
+                let action = r_action_chan.recv_timeout(TIMEOUT)?;
+                debug!("[{}], Received action {:?} from VM", id, action);
+                match action {
+                    vm::Action::None => {
+                        break;
+                    }
+                    vm::Action::Open(x, sender) => {
+                        bcast(NodeMsg::Elem(x))?;
+                        let result = recv()?.iter().map(unwrap_elem_msg).sum();
+                        debug!("[{}] Partially opened {:?}", id, result);
+                        sender.send(result)?
+                    }
+                    vm::Action::Input(id, e_option, sender) => {
+                        match e_option {
+                            Some(e) => bcast(NodeMsg::Elem(e))?,
+                            None => (),
+                        };
+                        let e = unwrap_elem_msg(&self.r_node_chan[id].recv_timeout(TIMEOUT)?);
+                        sender.send(e)?
+                    }
+                    vm::Action::Check(openings, sender) => {
+                        // mac_check everything and send error on first failure
+                        let mut ok = true;
+                        for (x, opening) in openings {
+                            match mac_check(&x, &opening)? {
+                                Ok(()) => {}
+                                e => {
+                                    error!("[{}] MAC check failed: {:?}", id, e);
+                                    sender.send(e)?;
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if ok {
+                            debug!("[{}] All MAC check ok", id);
+                            sender.send(Ok(()))?;
+                        }
+                    }
+                }
+            }
+            Ok(())
         };
 
         // wait for start
@@ -152,51 +200,7 @@ impl Node {
                                 self.s_sync_chan.send(SyncMsgReply::Done)?;
                                 break;
                             } else {
-                                let action = r_action_chan.recv_timeout(TIMEOUT)?;
-                                debug!("[{}], Received action {:?} from VM", id, action);
-                                match action {
-                                    vm::Action::None => (),
-                                    vm::Action::Open(x, sender) => {
-                                        bcast(NodeMsg::Elem(x))?;
-                                        let result = recv()?.iter().map(unwrap_elem_msg).sum();
-                                        debug!("[{}] Partially opened {:?}", id, result);
-                                        sender.send(result)?
-                                    }
-                                    vm::Action::Input(id, e_option, sender) => {
-                                        match e_option {
-                                            Some(e) => bcast(NodeMsg::Elem(e))?,
-                                            None => (),
-                                        };
-                                        let e = unwrap_elem_msg(&self.r_node_chan[id].recv_timeout(TIMEOUT)?);
-                                        sender.send(e)?
-                                    }
-                                    vm::Action::SOutput(share, mut openings, sender) => {
-                                        // open the first share, the rest are already opened
-                                        bcast(NodeMsg::Elem(share.share))?;
-                                        let x: Fp = recv()?.iter().map(unwrap_elem_msg).sum();
-                                        debug!("[{}] Partially opened {:?}", id, x);
-
-                                        // mac_check everything and send error on first failure
-                                        let mut ok = true;
-                                        openings.push((x, share));
-                                        for (x, opening) in openings {
-                                            match mac_check(&x, &opening)? {
-                                                Ok(()) => {}
-                                                e => {
-                                                    error!("[{}] MAC check failed: {:?}", id, e);
-                                                    sender.send(e)?;
-                                                    ok = false;
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if ok {
-                                            debug!("[{}] All MAC check ok", id);
-                                            sender.send(Ok(()))?;
-                                        }
-                                    }
-                                }
+                                handle_action()?;
                                 self.s_sync_chan.send(SyncMsgReply::Ok)?;
                             }
                         },
