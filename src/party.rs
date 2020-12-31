@@ -1,3 +1,7 @@
+//! This module implement a party that participates in the MPC protocol.
+//! It assumes perfect channels for sending and receiving messages.
+//! The actual networking layer is handled by an outer layer.
+
 use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
@@ -19,10 +23,12 @@ pub struct Party {
     rand_chan: Receiver<RandShareMsg>,
     s_party_chan: Vec<Sender<PartyMsg>>,
     r_party_chan: Vec<Receiver<PartyMsg>>,
-    com_scheme: commit::Scheme,
 }
 
 impl Party {
+    /// Spawn a party thread and returns a handler.
+    /// If successful, the handler will return the result of the computation,
+    /// i.e., the result of calling `COutput` or `SOutput`.
     pub fn spawn(
         id: PartyID,
         alpha_share: Fp,
@@ -34,24 +40,22 @@ impl Party {
         rand_chan: Receiver<RandShareMsg>,
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
-        com_scheme: commit::Scheme,
         rng_seed: [usize; 4],
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
-            let mut s = Party {
+            let s = Party {
                 s_sync_chan,
                 r_sync_chan,
                 triple_chan,
                 rand_chan,
                 s_party_chan,
                 r_party_chan,
-                com_scheme,
             };
             s.listen(id, alpha_share, reg, instructions, rng_seed)
         })
     }
 
-    fn listen(&mut self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
+    fn listen(&self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
         // init forwarding channels
@@ -89,11 +93,12 @@ impl Party {
         let recv = || recv_all(&self.r_party_chan, TIMEOUT);
 
         // perform one MAC check
+        let com_scheme = commit::Scheme {};
         let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, MPCError> {
             // let d = alpha_i * x - mac_i
             let d = alpha_share * x - share.mac;
             // commit d
-            let (d_com, d_open) = self.com_scheme.commit(d, rng);
+            let (d_com, d_open) = com_scheme.commit(d, rng);
             bcast(PartyMsg::Com(d_com))?;
             // get commitment from others
             let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
@@ -102,7 +107,7 @@ impl Party {
             let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
             // verify all the commitments of d
             // and check they sum to 0
-            let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
+            let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| com_scheme.verify(&o, &c)).all(|x| x);
             let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
 
             // this is a weird kind of type but it makes categorizing the errors easier

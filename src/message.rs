@@ -30,7 +30,7 @@ pub(crate) fn recv_all<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur:
 }
 
 /// This is the message sent, usually using broadcast,
-/// by the synchronizer to the individual nodes.
+/// by the synchronizer to the individual parties.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SyncMsg {
     Start,
@@ -38,7 +38,7 @@ pub enum SyncMsg {
     Abort,
 }
 
-/// This is the message send from the nodes to the synchronizer.
+/// This is the message send from the parties to the synchronizer.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SyncReplyMsg {
     Ok,
@@ -46,7 +46,7 @@ pub enum SyncReplyMsg {
     Abort,
 }
 
-/// This is the message sent between the nodes themselves.
+/// This is the message sent between the parties themselves.
 #[derive(Copy, Clone, Debug)]
 pub enum PartyMsg {
     Elem(Fp),
@@ -76,5 +76,3 @@ pub struct RandShareMsg {
     pub clear: Option<Fp>,
     pub party_id: PartyID,
 }
-
-// TODO define a type for internal message, between vm and node

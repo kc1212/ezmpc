@@ -75,7 +75,6 @@ fn integration_test_clear_add() {
         rand_receiver,
         vec![],
         vec![],
-        commit::Scheme {},
         TEST_SEED,
     );
 
@@ -122,7 +121,6 @@ fn integration_test_triple() {
         rand_receiver,
         vec![],
         vec![],
-        commit::Scheme {},
         TEST_SEED,
     );
 
@@ -195,7 +193,6 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
                 rand_chans[i].1.clone(),
                 get_row(&party_chans, i).into_iter().map(|(s, _)| s).collect(),
                 get_col(&party_chans, i).into_iter().map(|(_, r)| r).collect(),
-                commit::Scheme {},
                 TEST_SEED,
             );
             party_handle
