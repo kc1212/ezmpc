@@ -44,9 +44,9 @@ pub enum MPCError {
     #[error(transparent)]
     SendErrorSyncReplyMsg(#[from] crossbeam_channel::SendError<message::SyncReplyMsg>),
     #[error(transparent)]
-    SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::NodeMsg>),
+    SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::PartyMsg>),
     #[error(transparent)]
-    SendErrorInputRandMsg(#[from] crossbeam_channel::SendError<message::InputRandMsg>),
+    SendErrorInputRandMsg(#[from] crossbeam_channel::SendError<message::RandShareMsg>),
     #[error(transparent)]
     SendErrorAction(#[from] crossbeam_channel::SendError<vm::Action>),
     #[error(transparent)]
@@ -58,5 +58,5 @@ pub enum MPCError {
     #[error(transparent)]
     TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<message::TripleMsg>),
     #[error(transparent)]
-    TrySendErrorInputRandMsg(#[from] crossbeam_channel::TrySendError<message::InputRandMsg>),
+    TrySendErrorRandShareMsg(#[from] crossbeam_channel::TrySendError<message::RandShareMsg>),
 }

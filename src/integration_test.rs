@@ -7,7 +7,7 @@ use test_env_log::test;
 use crate::algebra::Fp;
 use crate::crypto::*;
 use crate::message::*;
-use crate::node::Node;
+use crate::party::Party;
 use crate::synchronizer::Synchronizer;
 use crate::vm;
 
@@ -19,12 +19,12 @@ fn create_sync_chans(
     (Vec<Sender<SyncMsg>>, Vec<Receiver<SyncReplyMsg>>),
     (Vec<Sender<SyncReplyMsg>>, Vec<Receiver<SyncMsg>>),
 ) {
-    let (from_sync, to_node) = (0..n).map(|_| bounded(5)).unzip();
-    let (from_node, to_sync) = (0..n).map(|_| bounded(5)).unzip();
-    ((from_sync, to_sync), (from_node, to_node))
+    let (from_sync, to_party) = (0..n).map(|_| bounded(5)).unzip();
+    let (from_party, to_sync) = (0..n).map(|_| bounded(5)).unzip();
+    ((from_sync, to_sync), (from_party, to_party))
 }
 
-fn create_node_chans(n: usize) -> Vec<Vec<(Sender<NodeMsg>, Receiver<NodeMsg>)>> {
+fn create_party_chans(n: usize) -> Vec<Vec<(Sender<PartyMsg>, Receiver<PartyMsg>)>> {
     let mut output = Vec::new();
     for _ in 0..n {
         let mut row = Vec::new();
@@ -54,7 +54,7 @@ fn get_col<T: Clone>(matrix: &Vec<Vec<T>>, col: usize) -> Vec<T> {
 
 #[test]
 fn integration_test_clear_add() {
-    let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
+    let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (_triple_sender, triple_receiver) = bounded(5);
     let (_rand_sender, rand_receiver) = bounded(5);
     let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
@@ -64,13 +64,13 @@ fn integration_test_clear_add() {
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
-    let node_handle = Node::spawn(
+    let party_handle = Party::spawn(
         0,
         fake_alpha_share,
         vm::Reg::from_vec(&vec![one, one], &vec![]),
         prog,
-        sync_chans_for_node.0[0].clone(),
-        sync_chans_for_node.1[0].clone(),
+        sync_chans_for_party.0[0].clone(),
+        sync_chans_for_party.1[0].clone(),
         triple_receiver,
         rand_receiver,
         vec![],
@@ -79,7 +79,7 @@ fn integration_test_clear_add() {
         TEST_SEED,
     );
 
-    let answer = node_handle.join().unwrap().unwrap();
+    let answer = party_handle.join().unwrap().unwrap();
     assert_eq!(answer.len(), 1);
     assert_eq!(answer[0], two);
     assert_eq!((), sync_handle.join().unwrap().unwrap());
@@ -87,7 +87,7 @@ fn integration_test_clear_add() {
 
 #[test]
 fn integration_test_triple() {
-    let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(1);
+    let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (triple_sender, triple_receiver) = bounded(5);
     let (_rand_sender, rand_receiver) = bounded(5);
     let prog = vec![
@@ -111,13 +111,13 @@ fn integration_test_triple() {
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
-    let node_handle = Node::spawn(
+    let party_handle = Party::spawn(
         0,
         fake_alpha_share,
         vm::Reg::empty(),
         prog,
-        sync_chans_for_node.0[0].clone(),
-        sync_chans_for_node.1[0].clone(),
+        sync_chans_for_party.0[0].clone(),
+        sync_chans_for_party.1[0].clone(),
         triple_receiver,
         rand_receiver,
         vec![],
@@ -126,7 +126,7 @@ fn integration_test_triple() {
         TEST_SEED,
     );
 
-    let answer = node_handle.join().unwrap().unwrap();
+    let answer = party_handle.join().unwrap().unwrap();
     assert_eq!(answer.len(), 3);
     assert_eq!(answer[0], zero.share);
     assert_eq!(answer[1], one.share);
@@ -142,8 +142,8 @@ fn transpose<T: Clone>(v: &Vec<Vec<T>>) -> Vec<Vec<T>> {
 }
 
 fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::Reg>, expected: Vec<Fp>, rng: &mut impl Rng) {
-    let (sync_chans_for_sync, sync_chans_for_node) = create_sync_chans(n);
-    let node_chans = create_node_chans(n);
+    let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(n);
+    let party_chans = create_party_chans(n);
 
     let alpha: Fp = rng.gen();
     let alpha_shares = unauth_share(&alpha, n, rng);
@@ -161,7 +161,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     // check for the number of input instructions and generate random shares
     // TODO this is more rand shares than we need, since we're giving every party max_rand_count number of shares
     let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
-    let rand_chans = create_chans::<InputRandMsg>(n, max_rand_count * n);
+    let rand_chans = create_chans::<RandShareMsg>(n, max_rand_count * n);
     for clear_id in 0..n {
         for _ in 0..max_rand_count {
             let r: Fp = rng.gen();
@@ -169,7 +169,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
             let rand_shares: Vec<_> = auth_shares
                 .iter()
                 .enumerate()
-                .map(|(i, share)| InputRandMsg {
+                .map(|(i, share)| RandShareMsg {
                     share: *share,
                     clear: if clear_id == i { Some(r) } else { None },
                     party_id: clear_id,
@@ -182,28 +182,28 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     }
 
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
-    let node_handles: Vec<JoinHandle<_>> = (0..n)
+    let party_handles: Vec<JoinHandle<_>> = (0..n)
         .map(|i| {
-            let node_handle = Node::spawn(
+            let party_handle = Party::spawn(
                 i,
                 alpha_shares[i],
                 regs[i],
                 prog.clone(),
-                sync_chans_for_node.0[i].clone(),
-                sync_chans_for_node.1[i].clone(),
+                sync_chans_for_party.0[i].clone(),
+                sync_chans_for_party.1[i].clone(),
                 triple_chans[i].1.clone(),
                 rand_chans[i].1.clone(),
-                get_row(&node_chans, i).into_iter().map(|(s, _)| s).collect(),
-                get_col(&node_chans, i).into_iter().map(|(_, r)| r).collect(),
+                get_row(&party_chans, i).into_iter().map(|(s, _)| s).collect(),
+                get_col(&party_chans, i).into_iter().map(|(_, r)| r).collect(),
                 commit::Scheme {},
                 TEST_SEED,
             );
-            node_handle
+            party_handle
         })
         .collect();
 
     let mut output_shares = Vec::new();
-    for h in node_handles {
+    for h in party_handles {
         output_shares.push(h.join().unwrap().unwrap());
     }
     assert_eq!(

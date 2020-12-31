@@ -2,7 +2,7 @@ pub mod algebra;
 pub mod crypto;
 pub mod error;
 pub mod message;
-pub mod node;
+pub mod party;
 pub mod synchronizer;
 pub mod vm;
 

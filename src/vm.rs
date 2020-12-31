@@ -1,7 +1,7 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
 use crate::error::{MPCError, OutputError, TIMEOUT};
-use crate::message::{InputRandMsg, PartyID, TripleMsg};
+use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use std::cmp::min;
@@ -53,8 +53,8 @@ pub struct VM {
     alpha_share: Fp, // could be a reference type
     reg: Reg,
     triple_chan: Receiver<TripleMsg>,
-    rand_chan: Receiver<InputRandMsg>,
-    rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
+    rand_chan: Receiver<RandShareMsg>,
+    rand_msgs: HashMap<PartyID, Vec<RandShareMsg>>,
     partial_openings: Vec<(Fp, AuthShare)>,
 }
 
@@ -111,7 +111,7 @@ impl VM {
         alpha_share: Fp,
         reg: Reg,
         triple_chan: Receiver<TripleMsg>,
-        rand_chan: Receiver<InputRandMsg>,
+        rand_chan: Receiver<RandShareMsg>,
         r_chan: Receiver<Instruction>,
         s_chan: Sender<Action>,
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
@@ -121,7 +121,7 @@ impl VM {
         })
     }
 
-    fn new(id: PartyID, alpha_share: Fp, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<InputRandMsg>) -> VM {
+    fn new(id: PartyID, alpha_share: Fp, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<RandShareMsg>) -> VM {
         VM {
             id,
             alpha_share,
@@ -200,7 +200,7 @@ impl VM {
         Ok(())
     }
 
-    fn get_rand_share_for_id(&mut self, id: PartyID) -> Result<InputRandMsg, MPCError> {
+    fn get_rand_share_for_id(&mut self, id: PartyID) -> Result<RandShareMsg, MPCError> {
         loop {
             select! {
                 recv(self.rand_chan) -> r_res => {
@@ -322,7 +322,7 @@ mod tests {
     }
 
     // TODO return additional information for testing, e.g., how many MAC check we did
-    fn vm_runner(prog: Vec<Instruction>, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<InputRandMsg>) -> Result<Vec<Fp>, MPCError> {
+    fn vm_runner(prog: Vec<Instruction>, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<RandShareMsg>) -> Result<Vec<Fp>, MPCError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
@@ -333,7 +333,7 @@ mod tests {
 
             loop {
                 // these replies are obviously not the correct implementation, they're only here for testing
-                // the actual implementation is in node.rs
+                // the actual implementation is in party.rs
                 let reply = r_action_chan.recv_timeout(TIMEOUT)?;
                 match reply {
                     Action::Next => {
@@ -473,7 +473,7 @@ mod tests {
         let (_, dummy_triple_chan) = bounded(5);
         let (s_rand_chan, r_rand_chan) = bounded(5);
 
-        let rand_msg = InputRandMsg {
+        let rand_msg = RandShareMsg {
             share: AuthShare {
                 share: r_share,
                 mac: Fp::zero(),

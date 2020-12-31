@@ -48,7 +48,7 @@ pub enum SyncReplyMsg {
 
 /// This is the message sent between the nodes themselves.
 #[derive(Copy, Clone, Debug)]
-pub enum NodeMsg {
+pub enum PartyMsg {
     Elem(Fp),
     Com(commit::Commitment),
     Opening(commit::Opening),
@@ -71,7 +71,7 @@ impl TripleMsg {
 /// This is a random sharing where only one party knows the random share,
 /// used for inputting a secret value into the MPC.
 #[derive(Copy, Clone, Debug)]
-pub struct InputRandMsg {
+pub struct RandShareMsg {
     pub share: crypto::AuthShare,
     pub clear: Option<Fp>,
     pub party_id: PartyID,

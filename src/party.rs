@@ -12,17 +12,17 @@ use rand::{SeedableRng, StdRng};
 use std::thread;
 use std::thread::JoinHandle;
 
-pub struct Node {
+pub struct Party {
     s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
     triple_chan: Receiver<TripleMsg>,
-    rand_chan: Receiver<InputRandMsg>,
-    s_node_chan: Vec<Sender<NodeMsg>>,
-    r_node_chan: Vec<Receiver<NodeMsg>>,
+    rand_chan: Receiver<RandShareMsg>,
+    s_party_chan: Vec<Sender<PartyMsg>>,
+    r_party_chan: Vec<Receiver<PartyMsg>>,
     com_scheme: commit::Scheme,
 }
 
-impl Node {
+impl Party {
     pub fn spawn(
         id: PartyID,
         alpha_share: Fp,
@@ -31,20 +31,20 @@ impl Node {
         s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
         triple_chan: Receiver<TripleMsg>,
-        rand_chan: Receiver<InputRandMsg>,
-        s_node_chan: Vec<Sender<NodeMsg>>,
-        r_node_chan: Vec<Receiver<NodeMsg>>,
+        rand_chan: Receiver<RandShareMsg>,
+        s_party_chan: Vec<Sender<PartyMsg>>,
+        r_party_chan: Vec<Receiver<PartyMsg>>,
         com_scheme: commit::Scheme,
         rng_seed: [usize; 4],
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
-            let mut s = Node {
+            let mut s = Party {
                 s_sync_chan,
                 r_sync_chan,
                 triple_chan,
                 rand_chan,
-                s_node_chan,
-                r_node_chan,
+                s_party_chan,
+                r_party_chan,
                 com_scheme,
             };
             s.listen(id, alpha_share, reg, instructions, rng_seed)
@@ -64,29 +64,29 @@ impl Node {
         let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inner_triple_chan, r_inner_rand_chan, r_inst_chan, s_action_chan);
         let mut pc = 0;
 
-        let unwrap_elem_msg = |msg: &NodeMsg| -> Fp {
+        let unwrap_elem_msg = |msg: &PartyMsg| -> Fp {
             match msg {
-                NodeMsg::Elem(x) => *x,
+                PartyMsg::Elem(x) => *x,
                 e => panic!("expected an element message but got {:?}", e),
             }
         };
 
-        let unwrap_com_msg = |msg: &NodeMsg| -> commit::Commitment {
+        let unwrap_com_msg = |msg: &PartyMsg| -> commit::Commitment {
             match msg {
-                NodeMsg::Com(c) => *c,
+                PartyMsg::Com(c) => *c,
                 e => panic!("expected a com message but got {:?}", e),
             }
         };
 
-        let unwrap_open_msg = |msg: &NodeMsg| -> commit::Opening {
+        let unwrap_open_msg = |msg: &PartyMsg| -> commit::Opening {
             match msg {
-                NodeMsg::Opening(o) => *o,
+                PartyMsg::Opening(o) => *o,
                 e => panic!("expected an open message but got {:?}", e),
             }
         };
 
-        let bcast = |m| broadcast(&self.s_node_chan, m);
-        let recv = || recv_all(&self.r_node_chan, TIMEOUT);
+        let bcast = |m| broadcast(&self.s_party_chan, m);
+        let recv = || recv_all(&self.r_party_chan, TIMEOUT);
 
         // perform one MAC check
         let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, MPCError> {
@@ -94,11 +94,11 @@ impl Node {
             let d = alpha_share * x - share.mac;
             // commit d
             let (d_com, d_open) = self.com_scheme.commit(d, rng);
-            bcast(NodeMsg::Com(d_com))?;
+            bcast(PartyMsg::Com(d_com))?;
             // get commitment from others
             let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
             // commit-open d and collect them
-            bcast(NodeMsg::Opening(d_open))?;
+            bcast(PartyMsg::Opening(d_open))?;
             let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
             // verify all the commitments of d
             // and check they sum to 0
@@ -125,17 +125,17 @@ impl Node {
                         break;
                     }
                     vm::Action::Open(x, sender) => {
-                        bcast(NodeMsg::Elem(x))?;
+                        bcast(PartyMsg::Elem(x))?;
                         let result = recv()?.iter().map(unwrap_elem_msg).sum();
                         debug!("[{}] Partially opened {:?}", id, result);
                         sender.send(result)?
                     }
                     vm::Action::Input(id, e_option, sender) => {
                         match e_option {
-                            Some(e) => bcast(NodeMsg::Elem(e))?,
+                            Some(e) => bcast(PartyMsg::Elem(e))?,
                             None => (),
                         };
-                        let e = unwrap_elem_msg(&self.r_node_chan[id].recv_timeout(TIMEOUT)?);
+                        let e = unwrap_elem_msg(&self.r_party_chan[id].recv_timeout(TIMEOUT)?);
                         sender.send(e)?
                     }
                     vm::Action::Check(openings, sender) => {
@@ -186,7 +186,7 @@ impl Node {
                 recv(self.r_sync_chan) -> v => {
                     let msg: SyncMsg = v?;
                     match msg {
-                        SyncMsg::Start => panic!("node already started"),
+                        SyncMsg::Start => panic!("party already started"),
                         SyncMsg::Next => {
                             if pc >= prog.len() {
                                 panic!("instruction counter overflow");
@@ -215,4 +215,4 @@ impl Node {
     }
 }
 
-// TODO add node specific tests using a mock VM
+// TODO add party specific tests using a mock VM
