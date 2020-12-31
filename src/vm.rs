@@ -1,7 +1,7 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
 use crate::error::{MPCError, OutputError, TIMEOUT};
-use crate::message::{InputRandMsg, PartyID};
+use crate::message::{InputRandMsg, PartyID, TripleMsg};
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use std::cmp::min;
@@ -52,7 +52,7 @@ pub struct VM {
     id: PartyID,
     alpha_share: Fp, // could be a reference type
     reg: Reg,
-    triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+    triple_chan: Receiver<TripleMsg>,
     rand_chan: Receiver<InputRandMsg>,
     rand_msgs: HashMap<PartyID, Vec<InputRandMsg>>,
     partial_openings: Vec<(Fp, AuthShare)>,
@@ -110,7 +110,7 @@ impl VM {
         id: PartyID,
         alpha_share: Fp,
         reg: Reg,
-        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        triple_chan: Receiver<TripleMsg>,
         rand_chan: Receiver<InputRandMsg>,
         r_chan: Receiver<Instruction>,
         s_chan: Sender<Action>,
@@ -121,13 +121,7 @@ impl VM {
         })
     }
 
-    fn new(
-        id: PartyID,
-        alpha_share: Fp,
-        reg: Reg,
-        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
-        rand_chan: Receiver<InputRandMsg>,
-    ) -> VM {
+    fn new(id: PartyID, alpha_share: Fp, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<InputRandMsg>) -> VM {
         VM {
             id,
             alpha_share,
@@ -251,9 +245,9 @@ impl VM {
 
     fn do_triple(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr) -> Result<(), MPCError> {
         let triple = self.triple_chan.recv_timeout(TIMEOUT)?;
-        self.reg.secret[r0] = Some(triple.0);
-        self.reg.secret[r1] = Some(triple.1);
-        self.reg.secret[r2] = Some(triple.2);
+        self.reg.secret[r0] = Some(triple.a);
+        self.reg.secret[r1] = Some(triple.b);
+        self.reg.secret[r2] = Some(triple.c);
         Ok(())
     }
 
@@ -328,12 +322,7 @@ mod tests {
     }
 
     // TODO return additional information for testing, e.g., how many MAC check we did
-    fn vm_runner(
-        prog: Vec<Instruction>,
-        reg: Reg,
-        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
-        rand_chan: Receiver<InputRandMsg>,
-    ) -> Result<Vec<Fp>, MPCError> {
+    fn vm_runner(prog: Vec<Instruction>, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<InputRandMsg>) -> Result<Vec<Fp>, MPCError> {
         let (s_instruction_chan, r_instruction_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
 
@@ -472,7 +461,7 @@ mod tests {
         let a_share = AuthShare { share: a, mac: Fp::zero() };
         let b_share = AuthShare { share: b, mac: Fp::zero() };
         let c_share = AuthShare { share: c, mac: Fp::zero() };
-        s_triple_chan.send((a_share, b_share, c_share)).unwrap();
+        s_triple_chan.send(TripleMsg::new(a_share, b_share, c_share)).unwrap();
         let result = vm_runner(prog, Reg::empty(), r_triple_chan, dummy_rand_chan).unwrap();
         result.len() == 3 && result[0] == a_share.share && result[1] == b_share.share && result[2] == c_share.share
     }

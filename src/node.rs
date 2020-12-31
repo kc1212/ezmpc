@@ -13,9 +13,9 @@ use std::thread;
 use std::thread::JoinHandle;
 
 pub struct Node {
-    s_sync_chan: Sender<SyncMsgReply>,
+    s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
-    triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+    triple_chan: Receiver<TripleMsg>,
     rand_chan: Receiver<InputRandMsg>,
     s_node_chan: Vec<Sender<NodeMsg>>,
     r_node_chan: Vec<Receiver<NodeMsg>>,
@@ -28,9 +28,9 @@ impl Node {
         alpha_share: Fp,
         reg: vm::Reg,
         instructions: Vec<vm::Instruction>,
-        s_sync_chan: Sender<SyncMsgReply>,
+        s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
-        triple_chan: Receiver<(AuthShare, AuthShare, AuthShare)>,
+        triple_chan: Receiver<TripleMsg>,
         rand_chan: Receiver<InputRandMsg>,
         s_node_chan: Vec<Sender<NodeMsg>>,
         r_node_chan: Vec<Receiver<NodeMsg>>,
@@ -199,10 +199,10 @@ impl Node {
                             handle_action()?;
 
                             if instruction == vm::Instruction::Stop {
-                                self.s_sync_chan.send(SyncMsgReply::Done)?;
+                                self.s_sync_chan.send(SyncReplyMsg::Done)?;
                                 break;
                             } else {
-                                self.s_sync_chan.send(SyncMsgReply::Ok)?;
+                                self.s_sync_chan.send(SyncReplyMsg::Ok)?;
                             }
                         },
                         SyncMsg::Abort => panic!("abort"),

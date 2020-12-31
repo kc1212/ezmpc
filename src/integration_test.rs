@@ -16,8 +16,8 @@ const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
 fn create_sync_chans(
     n: usize,
 ) -> (
-    (Vec<Sender<SyncMsg>>, Vec<Receiver<SyncMsgReply>>),
-    (Vec<Sender<SyncMsgReply>>, Vec<Receiver<SyncMsg>>),
+    (Vec<Sender<SyncMsg>>, Vec<Receiver<SyncReplyMsg>>),
+    (Vec<Sender<SyncReplyMsg>>, Vec<Receiver<SyncMsg>>),
 ) {
     let (from_sync, to_node) = (0..n).map(|_| bounded(5)).unzip();
     let (from_node, to_sync) = (0..n).map(|_| bounded(5)).unzip();
@@ -107,7 +107,7 @@ fn integration_test_triple() {
         mac: Fp::one(),
     };
     let two = one + one;
-    triple_sender.send((zero, one, two)).unwrap();
+    triple_sender.send(TripleMsg::new(zero, one, two)).unwrap();
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
@@ -150,11 +150,11 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
 
     // check for the number of triples in prog and generate enough triples for it
     let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
-    let triple_chans = create_chans::<(AuthShare, AuthShare, AuthShare)>(n, triple_count);
+    let triple_chans = create_chans::<TripleMsg>(n, triple_count);
     for _ in 0..triple_count {
         let triple = auth_triple(n, &alpha, rng);
         for (i, (s, _)) in triple_chans.iter().enumerate() {
-            s.send((triple.0[i], triple.1[i], triple.2[i])).unwrap();
+            s.send(TripleMsg::new(triple.0[i], triple.1[i], triple.2[i])).unwrap();
         }
     }
 

@@ -1,5 +1,4 @@
 use crate::algebra::Fp;
-use crate::crypto::AuthShare;
 use crate::message;
 use crate::vm;
 
@@ -43,7 +42,7 @@ pub enum MPCError {
     #[error(transparent)]
     SendErrorSyncMsg(#[from] crossbeam_channel::SendError<message::SyncMsg>),
     #[error(transparent)]
-    SendErrorSyncMsgReply(#[from] crossbeam_channel::SendError<message::SyncMsgReply>),
+    SendErrorSyncReplyMsg(#[from] crossbeam_channel::SendError<message::SyncReplyMsg>),
     #[error(transparent)]
     SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::NodeMsg>),
     #[error(transparent)]
@@ -57,7 +56,7 @@ pub enum MPCError {
     #[error(transparent)]
     SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), OutputError>>),
     #[error(transparent)]
-    TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<(AuthShare, AuthShare, AuthShare)>),
+    TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<message::TripleMsg>),
     #[error(transparent)]
     TrySendErrorInputRandMsg(#[from] crossbeam_channel::TrySendError<message::InputRandMsg>),
 }

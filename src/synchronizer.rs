@@ -1,3 +1,6 @@
+//! This module contains a simple implementation of an alpha-synchronizer
+//! that communicates using channels.
+
 use crate::error::{MPCError, TIMEOUT};
 use crate::message::*;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
@@ -7,11 +10,12 @@ use std::thread::JoinHandle;
 
 pub struct Synchronizer {
     s_chans: Vec<Sender<SyncMsg>>,
-    r_chans: Vec<Receiver<SyncMsgReply>>,
+    r_chans: Vec<Receiver<SyncReplyMsg>>,
 }
 
 impl Synchronizer {
-    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncMsgReply>>) -> JoinHandle<Result<(), MPCError>> {
+    /// Spawn a thread that runs the synchronizer.
+    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncReplyMsg>>) -> JoinHandle<Result<(), MPCError>> {
         thread::spawn(move || {
             let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
@@ -24,7 +28,7 @@ impl Synchronizer {
         broadcast(&self.s_chans, m)
     }
 
-    fn recv_all(&self) -> Result<Vec<SyncMsgReply>, RecvTimeoutError> {
+    fn recv_all(&self) -> Result<Vec<SyncReplyMsg>, RecvTimeoutError> {
         recv_all(&self.r_chans, TIMEOUT)
     }
 
@@ -32,13 +36,13 @@ impl Synchronizer {
         self.broadcast(SyncMsg::Next)?;
         loop {
             let msgs = self.recv_all()?;
-            if msgs.iter().all(|x| *x == SyncMsgReply::Done) {
+            if msgs.iter().all(|x| *x == SyncReplyMsg::Done) {
                 debug!("All done");
                 break;
-            } else if msgs.contains(&SyncMsgReply::Abort) {
+            } else if msgs.contains(&SyncReplyMsg::Abort) {
                 self.broadcast(SyncMsg::Abort)?;
                 break;
-            } else if msgs.iter().all(|x| *x == SyncMsgReply::Ok) {
+            } else if msgs.iter().all(|x| *x == SyncReplyMsg::Ok) {
                 self.broadcast(SyncMsg::Next)?;
             } else {
                 panic!("unexpected messages {:?}", msgs);
@@ -51,7 +55,7 @@ impl Synchronizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{SyncMsg, SyncMsgReply};
+    use crate::message::{SyncMsg, SyncReplyMsg};
     use crossbeam_channel::bounded;
 
     #[test]
@@ -65,11 +69,11 @@ mod tests {
         assert_eq!(SyncMsg::Next, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         // then we expect Next again after sending Ok
-        s_reply.send(SyncMsgReply::Ok).unwrap();
+        s_reply.send(SyncReplyMsg::Ok).unwrap();
         assert_eq!(SyncMsg::Next, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         // finally, sending Abort will respond with Abort
-        s_reply.send(SyncMsgReply::Abort).unwrap();
+        s_reply.send(SyncReplyMsg::Abort).unwrap();
         assert_eq!(SyncMsg::Abort, r_msg.recv_timeout(TIMEOUT).unwrap());
 
         assert_eq!((), handler.join().unwrap().unwrap());
