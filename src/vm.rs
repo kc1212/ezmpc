@@ -1,6 +1,6 @@
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
-use crate::error::{MPCError, OutputError, TIMEOUT};
+use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
@@ -68,7 +68,7 @@ pub enum Action {
     /// Secret share an input.
     Input(PartyID, Option<Fp>, Sender<Fp>),
     /// Perform the MAC check.
-    Check(Vec<(Fp, AuthShare)>, Sender<Result<(), OutputError>>),
+    Check(Vec<(Fp, AuthShare)>, Sender<Result<(), MACCheckError>>),
 }
 
 /// These are the instructions for the VM.
@@ -272,7 +272,7 @@ impl VM {
     fn do_secret_output(&mut self, reg: RegAddr, s_chan: &Sender<Action>) -> Result<Fp, MPCError> {
         // first do the open step, just like process_open, but don't store the value
         let share = match self.reg.secret[reg] {
-            None => Err(OutputError::RegisterEmpty),
+            None => Err(MPCError::EmptyError),
             Some(x) => {
                 let (s, r) = bounded(1);
                 s_chan.send(Action::Open(x.share, s))?;

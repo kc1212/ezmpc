@@ -54,6 +54,29 @@ pub enum PartyMsg {
     Opening(commit::Opening),
 }
 
+impl PartyMsg {
+    pub(crate) fn get_elem(&self) -> Fp {
+        match *self {
+            PartyMsg::Elem(x) => x,
+            e => panic!("expected elem, got {:?}", e),
+        }
+    }
+
+    pub(crate) fn get_com(&self) -> commit::Commitment {
+        match *self {
+            PartyMsg::Com(x) => x,
+            e => panic!("expected com, got {:?}", e),
+        }
+    }
+
+    pub(crate) fn get_opening(&self) -> commit::Opening {
+        match *self {
+            PartyMsg::Opening(x) => x,
+            e => panic!("expected opening, got {:?}", e),
+        }
+    }
+}
+
 /// This is a share of a Beaver triple where `a * b = c`,
 /// used for computing multiplication.
 pub struct TripleMsg {

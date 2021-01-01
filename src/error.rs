@@ -9,21 +9,20 @@ use thiserror::Error;
 
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
 
-/// `OutputError` describes the different failure states when outputting a secret value.
+/// `MACCheckError` describes the different failure states when checking a MAC.
 #[derive(Debug)]
-pub enum OutputError {
-    RegisterEmpty,
+pub enum MACCheckError {
     BadCommitment,
     SumIsNotZero,
 }
 
-impl fmt::Display for OutputError {
+impl fmt::Display for MACCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "output failed with error {:?}", self)
     }
 }
 
-impl std::error::Error for OutputError {}
+impl std::error::Error for MACCheckError {}
 
 /// `MPCError` is a wrapper for all the errors in this software to make error handling easier.
 /// We do not use a generic parameter for the `SendError`s
@@ -34,7 +33,7 @@ pub enum MPCError {
     #[error("empty register")]
     EmptyError,
     #[error(transparent)]
-    OutputError(#[from] OutputError),
+    MACCheckError(#[from] MACCheckError),
     #[error(transparent)]
     RecvError(#[from] crossbeam_channel::RecvError),
     #[error(transparent)]
@@ -54,7 +53,7 @@ pub enum MPCError {
     #[error(transparent)]
     SendErrorFp(#[from] crossbeam_channel::SendError<Fp>),
     #[error(transparent)]
-    SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), OutputError>>),
+    SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), MACCheckError>>),
     #[error(transparent)]
     TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<message::TripleMsg>),
     #[error(transparent)]

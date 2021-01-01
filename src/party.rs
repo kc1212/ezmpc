@@ -5,7 +5,7 @@
 use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
-use crate::error::{MPCError, OutputError, TIMEOUT};
+use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::*;
 use crate::vm;
 
@@ -68,43 +68,22 @@ impl Party {
         let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inner_triple_chan, r_inner_rand_chan, r_inst_chan, s_action_chan);
         let mut pc = 0;
 
-        let unwrap_elem_msg = |msg: &PartyMsg| -> Fp {
-            match msg {
-                PartyMsg::Elem(x) => *x,
-                e => panic!("expected an element message but got {:?}", e),
-            }
-        };
-
-        let unwrap_com_msg = |msg: &PartyMsg| -> commit::Commitment {
-            match msg {
-                PartyMsg::Com(c) => *c,
-                e => panic!("expected a com message but got {:?}", e),
-            }
-        };
-
-        let unwrap_open_msg = |msg: &PartyMsg| -> commit::Opening {
-            match msg {
-                PartyMsg::Opening(o) => *o,
-                e => panic!("expected an open message but got {:?}", e),
-            }
-        };
-
         let bcast = |m| broadcast(&self.s_party_chan, m);
         let recv = || recv_all(&self.r_party_chan, TIMEOUT);
 
         // perform one MAC check
         let com_scheme = commit::Scheme {};
-        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), OutputError>, MPCError> {
+        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), MACCheckError>, MPCError> {
             // let d = alpha_i * x - mac_i
             let d = alpha_share * x - share.mac;
             // commit d
             let (d_com, d_open) = com_scheme.commit(d, rng);
             bcast(PartyMsg::Com(d_com))?;
             // get commitment from others
-            let d_coms: Vec<_> = recv()?.iter().map(unwrap_com_msg).collect();
+            let d_coms: Vec<_> = recv()?.iter().map(|x| x.get_com()).collect();
             // commit-open d and collect them
             bcast(PartyMsg::Opening(d_open))?;
-            let d_opens: Vec<_> = recv()?.iter().map(unwrap_open_msg).collect();
+            let d_opens: Vec<_> = recv()?.iter().map(|x| x.get_opening()).collect();
             // verify all the commitments of d
             // and check they sum to 0
             let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| com_scheme.verify(&o, &c)).all(|x| x);
@@ -112,9 +91,9 @@ impl Party {
 
             // this is a weird kind of type but it makes categorizing the errors easier
             if !coms_ok {
-                Ok(Err(OutputError::BadCommitment))
+                Ok(Err(MACCheckError::BadCommitment))
             } else if !zero_ok {
-                Ok(Err(OutputError::SumIsNotZero))
+                Ok(Err(MACCheckError::SumIsNotZero))
             } else {
                 Ok(Ok(()))
             }
@@ -131,7 +110,7 @@ impl Party {
                     }
                     vm::Action::Open(x, sender) => {
                         bcast(PartyMsg::Elem(x))?;
-                        let result = recv()?.iter().map(unwrap_elem_msg).sum();
+                        let result = recv()?.iter().map(|x| x.get_elem()).sum();
                         debug!("[{}] Partially opened {:?}", id, result);
                         sender.send(result)?
                     }
@@ -140,7 +119,7 @@ impl Party {
                             Some(e) => bcast(PartyMsg::Elem(e))?,
                             None => (),
                         };
-                        let e = unwrap_elem_msg(&self.r_party_chan[id].recv_timeout(TIMEOUT)?);
+                        let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.get_elem();
                         sender.send(e)?
                     }
                     vm::Action::Check(openings, sender) => {
