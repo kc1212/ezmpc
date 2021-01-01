@@ -55,21 +55,21 @@ pub enum PartyMsg {
 }
 
 impl PartyMsg {
-    pub(crate) fn get_elem(&self) -> Fp {
+    pub(crate) fn unwrap_elem(&self) -> Fp {
         match *self {
             PartyMsg::Elem(x) => x,
             e => panic!("expected elem, got {:?}", e),
         }
     }
 
-    pub(crate) fn get_com(&self) -> commit::Commitment {
+    pub(crate) fn unwrap_com(&self) -> commit::Commitment {
         match *self {
             PartyMsg::Com(x) => x,
             e => panic!("expected com, got {:?}", e),
         }
     }
 
-    pub(crate) fn get_opening(&self) -> commit::Opening {
+    pub(crate) fn unwrap_opening(&self) -> commit::Opening {
         match *self {
             PartyMsg::Opening(x) => x,
             e => panic!("expected opening, got {:?}", e),

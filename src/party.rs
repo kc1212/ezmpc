@@ -80,10 +80,10 @@ impl Party {
             let (d_com, d_open) = com_scheme.commit(d, rng);
             bcast(PartyMsg::Com(d_com))?;
             // get commitment from others
-            let d_coms: Vec<_> = recv()?.iter().map(|x| x.get_com()).collect();
+            let d_coms: Vec<_> = recv()?.iter().map(|x| x.unwrap_com()).collect();
             // commit-open d and collect them
             bcast(PartyMsg::Opening(d_open))?;
-            let d_opens: Vec<_> = recv()?.iter().map(|x| x.get_opening()).collect();
+            let d_opens: Vec<_> = recv()?.iter().map(|x| x.unwrap_opening()).collect();
             // verify all the commitments of d
             // and check they sum to 0
             let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| com_scheme.verify(&o, &c)).all(|x| x);
@@ -110,7 +110,7 @@ impl Party {
                     }
                     vm::Action::Open(x, sender) => {
                         bcast(PartyMsg::Elem(x))?;
-                        let result = recv()?.iter().map(|x| x.get_elem()).sum();
+                        let result = recv()?.iter().map(|x| x.unwrap_elem()).sum();
                         debug!("[{}] Partially opened {:?}", id, result);
                         sender.send(result)?
                     }
@@ -119,7 +119,7 @@ impl Party {
                             Some(e) => bcast(PartyMsg::Elem(e))?,
                             None => (),
                         };
-                        let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.get_elem();
+                        let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.unwrap_elem();
                         sender.send(e)?
                     }
                     vm::Action::Check(openings, sender) => {
