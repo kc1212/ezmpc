@@ -6,17 +6,21 @@ use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
-use crate::message::*;
+use crate::message;
+use crate::message::{PartyID, PartyMsg, RandShareMsg, SyncMsg, SyncReplyMsg, TripleMsg};
 use crate::vm;
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::{debug, error};
 use num_traits::Zero;
-use rand::{SeedableRng, StdRng};
+use rand::{Rng, SeedableRng, StdRng};
 use std::thread;
 use std::thread::JoinHandle;
 
 pub struct Party {
+    id: PartyID,
+    alpha_share: Fp,
+    com_scheme: commit::Scheme,
     s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
     triple_chan: Receiver<TripleMsg>,
@@ -44,6 +48,9 @@ impl Party {
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
             let s = Party {
+                id,
+                alpha_share,
+                com_scheme: commit::Scheme {},
                 s_sync_chan,
                 r_sync_chan,
                 triple_chan,
@@ -51,11 +58,11 @@ impl Party {
                 s_party_chan,
                 r_party_chan,
             };
-            s.listen(id, alpha_share, reg, instructions, rng_seed)
+            s.listen(reg, instructions, rng_seed)
         })
     }
 
-    fn listen(&self, id: PartyID, alpha_share: Fp, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
+    fn listen(&self, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
         // init forwarding channels
@@ -65,96 +72,25 @@ impl Party {
         // start the vm
         let (s_inst_chan, r_inst_chan) = bounded(5);
         let (s_action_chan, r_action_chan) = bounded(5);
-        let vm_handler: JoinHandle<_> = vm::VM::spawn(id, alpha_share, reg, r_inner_triple_chan, r_inner_rand_chan, r_inst_chan, s_action_chan);
+        let vm_handler: JoinHandle<_> = vm::VM::spawn(
+            self.id,
+            self.alpha_share,
+            reg,
+            r_inner_triple_chan,
+            r_inner_rand_chan,
+            r_inst_chan,
+            s_action_chan,
+        );
         let mut pc = 0;
-
-        let bcast = |m| broadcast(&self.s_party_chan, m);
-        let recv = || recv_all(&self.r_party_chan, TIMEOUT);
-
-        // perform one MAC check
-        let com_scheme = commit::Scheme {};
-        let mut mac_check = |x: &Fp, share: &AuthShare| -> Result<Result<(), MACCheckError>, MPCError> {
-            // let d = alpha_i * x - mac_i
-            let d = alpha_share * x - share.mac;
-            // commit d
-            let (d_com, d_open) = com_scheme.commit(d, rng);
-            bcast(PartyMsg::Com(d_com))?;
-            // get commitment from others
-            let d_coms: Vec<_> = recv()?.iter().map(|x| x.unwrap_com()).collect();
-            // commit-open d and collect them
-            bcast(PartyMsg::Opening(d_open))?;
-            let d_opens: Vec<_> = recv()?.iter().map(|x| x.unwrap_opening()).collect();
-            // verify all the commitments of d
-            // and check they sum to 0
-            let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| com_scheme.verify(&o, &c)).all(|x| x);
-            let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
-
-            // this is a weird kind of type but it makes categorizing the errors easier
-            if !coms_ok {
-                Ok(Err(MACCheckError::BadCommitment))
-            } else if !zero_ok {
-                Ok(Err(MACCheckError::SumIsNotZero))
-            } else {
-                Ok(Ok(()))
-            }
-        };
-
-        // handle action items from the VM
-        let mut handle_action = || -> Result<(), MPCError> {
-            loop {
-                let action = r_action_chan.recv_timeout(TIMEOUT)?;
-                debug!("[{}], Received action {:?} from VM", id, action);
-                match action {
-                    vm::Action::Next => {
-                        break;
-                    }
-                    vm::Action::Open(x, sender) => {
-                        bcast(PartyMsg::Elem(x))?;
-                        let result = recv()?.iter().map(|x| x.unwrap_elem()).sum();
-                        debug!("[{}] Partially opened {:?}", id, result);
-                        sender.send(result)?
-                    }
-                    vm::Action::Input(id, e_option, sender) => {
-                        match e_option {
-                            Some(e) => bcast(PartyMsg::Elem(e))?,
-                            None => (),
-                        };
-                        let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.unwrap_elem();
-                        sender.send(e)?
-                    }
-                    vm::Action::Check(openings, sender) => {
-                        // mac_check everything and send error on first failure
-                        let mut ok = true;
-                        for (x, opening) in openings {
-                            match mac_check(&x, &opening)? {
-                                Ok(()) => {}
-                                e => {
-                                    error!("[{}] MAC check failed: {:?}", id, e);
-                                    sender.send(e)?;
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if ok {
-                            debug!("[{}] All MAC check ok", id);
-                            sender.send(Ok(()))?;
-                        }
-                    }
-                }
-            }
-            Ok(())
-        };
 
         // wait for start
         loop {
             let msg = self.r_sync_chan.recv()?;
             if msg == SyncMsg::Start {
-                debug!("[{}] Starting", id);
+                debug!("[{}] Starting", self.id);
                 break;
             } else {
-                debug!("[{}] Received {:?} while waiting to start", id, msg);
+                debug!("[{}] Received {:?} while waiting to start", self.id, msg);
             }
         }
 
@@ -178,9 +114,9 @@ impl Party {
                             let instruction = prog[pc];
                             pc += 1;
 
-                            debug!("[{}] Sending instruction {:?} to VM", id, instruction);
+                            debug!("[{}] Sending instruction {:?} to VM", self.id, instruction);
                             s_inst_chan.send(instruction)?;
-                            handle_action()?;
+                            self.handle_vm_actions(&r_action_chan, rng)?;
 
                             if instruction == vm::Instruction::Stop {
                                 self.s_sync_chan.send(SyncReplyMsg::Done)?;
@@ -196,6 +132,89 @@ impl Party {
         }
 
         vm_handler.join().expect("thread panicked")
+    }
+
+    fn bcast(&self, m: PartyMsg) -> Result<(), MPCError> {
+        message::broadcast(&self.s_party_chan, m)?;
+        Ok(())
+    }
+
+    fn recv(&self) -> Result<Vec<PartyMsg>, MPCError> {
+        let out = message::receive(&self.r_party_chan, TIMEOUT)?;
+        Ok(out)
+    }
+
+    fn mac_check(&self, x: &Fp, share: &AuthShare, rng: &mut impl Rng) -> Result<Result<(), MACCheckError>, MPCError> {
+        // let d = alpha_i * x - mac_i
+        let d = self.alpha_share * x - share.mac;
+        // commit d
+        let (d_com, d_open) = self.com_scheme.commit(d, rng);
+        self.bcast(PartyMsg::Com(d_com))?;
+        // get commitment from others
+        let d_coms: Vec<_> = self.recv()?.iter().map(|x| x.unwrap_com()).collect();
+        // commit-open d and collect them
+        self.bcast(PartyMsg::Opening(d_open))?;
+        let d_opens: Vec<_> = self.recv()?.iter().map(|x| x.unwrap_opening()).collect();
+        // verify all the commitments of d
+        // and check they sum to 0
+        let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
+        let zero_ok = d_opens.into_iter().map(|o| o.get_v()).sum::<Fp>() == Fp::zero();
+
+        // this is a weird kind of return type but it makes categorizing the errors easier
+        if !coms_ok {
+            Ok(Err(MACCheckError::BadCommitment))
+        } else if !zero_ok {
+            Ok(Err(MACCheckError::SumIsNotZero))
+        } else {
+            Ok(Ok(()))
+        }
+    }
+
+    fn handle_vm_actions(&self, r_action_chan: &Receiver<vm::Action>, rng: &mut impl Rng) -> Result<(), MPCError> {
+        loop {
+            let action = r_action_chan.recv_timeout(TIMEOUT)?;
+            debug!("[{}], Received action {:?} from VM", self.id, action);
+            match action {
+                vm::Action::Next => {
+                    break;
+                }
+                vm::Action::Open(x, sender) => {
+                    self.bcast(PartyMsg::Elem(x))?;
+                    let result = self.recv()?.iter().map(|x| x.unwrap_elem()).sum();
+                    debug!("[{}] Partially opened {:?}", self.id, result);
+                    sender.send(result)?
+                }
+                vm::Action::Input(id, e_option, sender) => {
+                    match e_option {
+                        Some(e) => self.bcast(PartyMsg::Elem(e))?,
+                        None => (),
+                    };
+                    let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.unwrap_elem();
+                    sender.send(e)?
+                }
+                vm::Action::Check(openings, sender) => {
+                    // mac_check everything and send error on first failure
+                    let mut ok = true;
+                    for (x, opening) in openings {
+                        match self.mac_check(&x, &opening, rng)? {
+                            Ok(()) => {}
+                            e => {
+                                error!("[{}] MAC check failed: {:?}", self.id, e);
+                                sender.send(e)?;
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if ok {
+                        debug!("[{}] All MAC check ok", self.id);
+                        sender.send(Ok(()))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 

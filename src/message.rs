@@ -19,7 +19,7 @@ pub(crate) fn broadcast<T: Copy + Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T)
 }
 
 /// Wait for one message of type `T` from every channel in `r_chans`.
-pub(crate) fn recv_all<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duration) -> Result<Vec<T>, RecvTimeoutError> {
+pub(crate) fn receive<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duration) -> Result<Vec<T>, RecvTimeoutError> {
     let mut out: Vec<T> = Vec::new();
     for c in r_chans {
         let m = c.recv_timeout(dur)?;

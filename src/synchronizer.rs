@@ -29,7 +29,7 @@ impl Synchronizer {
     }
 
     fn recv_all(&self) -> Result<Vec<SyncReplyMsg>, RecvTimeoutError> {
-        recv_all(&self.r_chans, TIMEOUT)
+        receive(&self.r_chans, TIMEOUT)
     }
 
     fn listen(&self) -> Result<(), MPCError> {
