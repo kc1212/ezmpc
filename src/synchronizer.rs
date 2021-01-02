@@ -2,11 +2,12 @@
 //! that communicates using channels.
 
 use crate::error::{MPCError, TIMEOUT};
-use crate::message::*;
+use crate::message;
+use crate::message::{SyncMsg, SyncReplyMsg};
+
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::thread;
-use std::thread::JoinHandle;
 
 pub struct Synchronizer {
     s_chans: Vec<Sender<SyncMsg>>,
@@ -15,7 +16,9 @@ pub struct Synchronizer {
 
 impl Synchronizer {
     /// Spawn a thread that runs the synchronizer.
-    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncReplyMsg>>) -> JoinHandle<Result<(), MPCError>> {
+    /// It reads messages from `r_chans` and sends messages using `s_chans`.
+    /// These channels are assumed to be correctly connected to the parties.
+    pub fn spawn(s_chans: Vec<Sender<SyncMsg>>, r_chans: Vec<Receiver<SyncReplyMsg>>) -> thread::JoinHandle<Result<(), MPCError>> {
         thread::spawn(move || {
             let s = Synchronizer { s_chans, r_chans };
             s.broadcast(SyncMsg::Start)?;
@@ -25,11 +28,11 @@ impl Synchronizer {
     }
 
     fn broadcast(&self, m: SyncMsg) -> Result<(), SendError<SyncMsg>> {
-        broadcast(&self.s_chans, m)
+        message::broadcast(&self.s_chans, m)
     }
 
     fn recv_all(&self) -> Result<Vec<SyncReplyMsg>, RecvTimeoutError> {
-        receive(&self.r_chans, TIMEOUT)
+        message::receive(&self.r_chans, TIMEOUT)
     }
 
     fn listen(&self) -> Result<(), MPCError> {
@@ -58,10 +61,12 @@ mod tests {
     use crate::message::{SyncMsg, SyncReplyMsg};
     use crossbeam_channel::bounded;
 
+    const TEST_CAP: usize = 5;
+
     #[test]
     fn test_synchronizer() {
-        let (s_msg, r_msg) = bounded(5);
-        let (s_reply, r_reply) = bounded(5);
+        let (s_msg, r_msg) = bounded(TEST_CAP);
+        let (s_reply, r_reply) = bounded(TEST_CAP);
         let handler = Synchronizer::spawn(vec![s_msg], vec![r_reply]);
 
         // we expect to hear a Start followed by a Next

@@ -1,3 +1,5 @@
+//! The virtual machine that executes instructions on secret-shared data is defined in this module.
+
 use crate::algebra::Fp;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
@@ -9,6 +11,8 @@ use std::collections::HashMap;
 use std::ops;
 use std::thread;
 use std::thread::JoinHandle;
+
+pub(crate) const DEFAULT_CAP: usize = 5;
 
 type RegAddr = usize;
 
@@ -48,9 +52,11 @@ const REG_SIZE: usize = 128;
 
 /// The stateful virtual machine that execute instructions defined in `Instruction`.
 /// It communicates with the outside world using channels if it needs additional information.
+/// It is a special register-based VM, where there are two types of registers,
+/// one for clear (plaintext) values and another for secret-shared values.
 pub struct VM {
     id: PartyID,
-    alpha_share: Fp, // could be a reference type
+    alpha_share: Fp,
     reg: Reg,
     triple_chan: Receiver<TripleMsg>,
     rand_chan: Receiver<RandShareMsg>,
@@ -79,19 +85,36 @@ pub enum Action {
 /// Most instructions store the result in the register of the first operand.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Instruction {
-    CAdd(RegAddr, RegAddr, RegAddr),          // clear add
-    CSub(RegAddr, RegAddr, RegAddr),          // clear sub
-    CMul(RegAddr, RegAddr, RegAddr),          // clear mul
-    SAdd(RegAddr, RegAddr, RegAddr),          // secret add
-    SSub(RegAddr, RegAddr, RegAddr),          // secret sub
-    MAdd(RegAddr, RegAddr, RegAddr, PartyID), // mixed add: [a+b] <- a + [b]
-    MMul(RegAddr, RegAddr, RegAddr),          // mixed mul: [a*b] <- a * [b]
-    Input(RegAddr, RegAddr, PartyID),         // input value
-    Triple(RegAddr, RegAddr, RegAddr),        // store triple
-    Open(RegAddr, RegAddr),                   // open a shared/secret value
-    COutput(RegAddr),                         // output a clear value
-    SOutput(RegAddr),                         // output a secret value
-    Stop,                                     // stop the VM
+    /// `CAdd(c0, c1, c2)` performs `creg[c0] <- creg[c1] + creg[c2]` in the clear.
+    CAdd(RegAddr, RegAddr, RegAddr),
+    /// `CSub(c0, c1, c2)` performs `creg[c0] <- creg[c1] - creg[c2]` in the clear.
+    CSub(RegAddr, RegAddr, RegAddr),
+    /// `CMul(c0, c1, c2)` performs `creg[c0] <- creg[c1] * creg[c2]` in the clear.
+    CMul(RegAddr, RegAddr, RegAddr),
+    /// `SAdd(c0, c1, c2)` performs `sreg[s0] <- sreg[s1] + sreg[s2]` in the secret shared domain.
+    SAdd(RegAddr, RegAddr, RegAddr),
+    /// `SSub(c0, c1, c2)` performs `sreg[s0] <- sreg[s1] - sreg[s2]` in the secret shared domain.
+    SSub(RegAddr, RegAddr, RegAddr),
+    /// `MAdd(s0, c1, s2, id)` performs `sreg[s0] <- creg[c1] + sreg[s2]`.
+    /// The identity `id` must be the same across all parties for the computation to be correct.
+    MAdd(RegAddr, RegAddr, RegAddr, PartyID),
+    /// `MMul(s0, c1, s2)` performs `sreg[s0] <- creg[c1] * sreg[s2]`.
+    MMul(RegAddr, RegAddr, RegAddr),
+    /// `Input(s0, c1, id)` consumes a random-sharing and uses that to input the clear value in `c1`
+    /// that only the party `id` knows into the secret register at `s0`.
+    /// At the end all parties should hold an authenticated share of the value in `c1` in the secret register `s0`.
+    Input(RegAddr, RegAddr, PartyID),
+    /// `Triple(s0, s1, s2)` consume a triple and store it in the secret registers `s0`, `s1` and `s2`.
+    Triple(RegAddr, RegAddr, RegAddr),
+    /// `Open(c0, s1)` partially opens the value `sreg[s1]` and stores it in `creg[c0]`.
+    Open(RegAddr, RegAddr),
+    /// `COutput(c0)` pushes the value in `creg[c0]` to the output vector.
+    COutput(RegAddr),
+    /// `SOutput(c0)` pushes the value in `creg[s0]` to the output vector.
+    /// MAC Check is performed on all partially opened values when this instruction is used.
+    SOutput(RegAddr),
+    /// Stop the virtual machine and do MAC Check on all partially opened values that have not been checked.
+    Stop,
 }
 
 fn opt_to_res<T>(v: Option<T>) -> Result<T, MPCError> {
@@ -103,7 +126,7 @@ fn opt_to_res<T>(v: Option<T>) -> Result<T, MPCError> {
 
 impl VM {
     /// Spawns a new VM thread and returns its handler.
-    /// This function assumes all the VMs have a unique `id`,
+    /// This function assumes all the VMs running in the MPC cluster have a unique `id`,
     /// the global MAC key share (`alpha_share`) is correct and that
     /// the channels are not disconnected before calling `.join` on the returned handler.
     pub fn spawn(
@@ -289,7 +312,7 @@ impl VM {
 
     fn do_mac_check(&mut self, s_chan: &Sender<Action>) -> Result<(), MPCError> {
         // next do the mac_check
-        let (s, r) = bounded(5);
+        let (s, r) = bounded(1);
         s_chan.send(Action::Check(self.partial_openings.clone(), s))?;
 
         // wait for response and clear the partial opening vector
@@ -316,15 +339,15 @@ mod tests {
     }
 
     fn simple_vm_runner(prog: Vec<Instruction>, reg: Reg) -> Result<Vec<Fp>, MPCError> {
-        let (_, dummy_triple_chan) = bounded(5);
-        let (_, dummy_rand_chan) = bounded(5);
+        let (_, dummy_triple_chan) = bounded(DEFAULT_CAP);
+        let (_, dummy_rand_chan) = bounded(DEFAULT_CAP);
         vm_runner(prog, reg, dummy_triple_chan, dummy_rand_chan)
     }
 
     // TODO return additional information for testing, e.g., how many MAC check we did
     fn vm_runner(prog: Vec<Instruction>, reg: Reg, triple_chan: Receiver<TripleMsg>, rand_chan: Receiver<RandShareMsg>) -> Result<Vec<Fp>, MPCError> {
-        let (s_instruction_chan, r_instruction_chan) = bounded(5);
-        let (s_action_chan, r_action_chan) = bounded(5);
+        let (s_instruction_chan, r_instruction_chan) = bounded(DEFAULT_CAP);
+        let (s_action_chan, r_action_chan) = bounded(DEFAULT_CAP);
 
         let fake_alpha_share = Fp::zero();
         let handle = VM::spawn(0, fake_alpha_share, reg, triple_chan, rand_chan, r_instruction_chan, s_action_chan);
@@ -455,8 +478,8 @@ mod tests {
             Instruction::Stop,
         ];
 
-        let (s_triple_chan, r_triple_chan) = bounded(5);
-        let (_, dummy_rand_chan) = bounded(5);
+        let (s_triple_chan, r_triple_chan) = bounded(DEFAULT_CAP);
+        let (_, dummy_rand_chan) = bounded(DEFAULT_CAP);
 
         let a_share = AuthShare { share: a, mac: Fp::zero() };
         let b_share = AuthShare { share: b, mac: Fp::zero() };
@@ -470,8 +493,8 @@ mod tests {
     fn prop_input(r: Fp, r_share: Fp, x: Fp) -> bool {
         let prog = vec![Instruction::Input(0, 0, 0), Instruction::SOutput(0), Instruction::Stop];
 
-        let (_, dummy_triple_chan) = bounded(5);
-        let (s_rand_chan, r_rand_chan) = bounded(5);
+        let (_, dummy_triple_chan) = bounded(DEFAULT_CAP);
+        let (s_rand_chan, r_rand_chan) = bounded(DEFAULT_CAP);
 
         let rand_msg = RandShareMsg {
             share: AuthShare {

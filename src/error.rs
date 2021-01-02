@@ -1,3 +1,5 @@
+//! This module defines error types that are used in this crate.
+
 use crate::algebra::Fp;
 use crate::message;
 use crate::vm;

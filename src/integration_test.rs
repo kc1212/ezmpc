@@ -12,6 +12,7 @@ use crate::synchronizer::Synchronizer;
 use crate::vm;
 
 const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
+const TEST_CAP: usize = 5;
 
 fn create_sync_chans(
     n: usize,
@@ -19,8 +20,8 @@ fn create_sync_chans(
     (Vec<Sender<SyncMsg>>, Vec<Receiver<SyncReplyMsg>>),
     (Vec<Sender<SyncReplyMsg>>, Vec<Receiver<SyncMsg>>),
 ) {
-    let (from_sync, to_party) = (0..n).map(|_| bounded(5)).unzip();
-    let (from_party, to_sync) = (0..n).map(|_| bounded(5)).unzip();
+    let (from_sync, to_party) = (0..n).map(|_| bounded(TEST_CAP)).unzip();
+    let (from_party, to_sync) = (0..n).map(|_| bounded(TEST_CAP)).unzip();
     ((from_sync, to_sync), (from_party, to_party))
 }
 
@@ -29,7 +30,7 @@ fn create_party_chans(n: usize) -> Vec<Vec<(Sender<PartyMsg>, Receiver<PartyMsg>
     for _ in 0..n {
         let mut row = Vec::new();
         for _ in 0..n {
-            row.push(bounded(5));
+            row.push(bounded(TEST_CAP));
         }
         output.push(row);
     }
@@ -55,8 +56,8 @@ fn get_col<T: Clone>(matrix: &Vec<Vec<T>>, col: usize) -> Vec<T> {
 #[test]
 fn integration_test_clear_add() {
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
-    let (_triple_sender, triple_receiver) = bounded(5);
-    let (_rand_sender, rand_receiver) = bounded(5);
+    let (_triple_sender, triple_receiver) = bounded(TEST_CAP);
+    let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
     let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
 
     let one = Fp::one();
@@ -87,8 +88,8 @@ fn integration_test_clear_add() {
 #[test]
 fn integration_test_triple() {
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
-    let (triple_sender, triple_receiver) = bounded(5);
-    let (_rand_sender, rand_receiver) = bounded(5);
+    let (triple_sender, triple_receiver) = bounded(TEST_CAP);
+    let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
     let prog = vec![
         vm::Instruction::Triple(0, 1, 2),
         vm::Instruction::SOutput(0),

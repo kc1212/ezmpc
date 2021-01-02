@@ -15,7 +15,8 @@ use log::{debug, error};
 use num_traits::Zero;
 use rand::{Rng, SeedableRng, StdRng};
 use std::thread;
-use std::thread::JoinHandle;
+
+const FORWARDING_CAP: usize = 1024;
 
 pub struct Party {
     id: PartyID,
@@ -45,7 +46,7 @@ impl Party {
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
         rng_seed: [usize; 4],
-    ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
+    ) -> thread::JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
             let s = Party {
                 id,
@@ -66,13 +67,13 @@ impl Party {
         let rng = &mut StdRng::from_seed(&rng_seed);
 
         // init forwarding channels
-        let (s_inner_triple_chan, r_inner_triple_chan) = bounded(1024); // TODO what should the cap be?
-        let (s_inner_rand_chan, r_inner_rand_chan) = bounded(1024); // TODO what should the cap be?
+        let (s_inner_triple_chan, r_inner_triple_chan) = bounded(FORWARDING_CAP);
+        let (s_inner_rand_chan, r_inner_rand_chan) = bounded(FORWARDING_CAP);
 
         // start the vm
-        let (s_inst_chan, r_inst_chan) = bounded(5);
-        let (s_action_chan, r_action_chan) = bounded(5);
-        let vm_handler: JoinHandle<_> = vm::VM::spawn(
+        let (s_inst_chan, r_inst_chan) = bounded(vm::DEFAULT_CAP);
+        let (s_action_chan, r_action_chan) = bounded(vm::DEFAULT_CAP);
+        let vm_handler: thread::JoinHandle<_> = vm::VM::spawn(
             self.id,
             self.alpha_share,
             reg,

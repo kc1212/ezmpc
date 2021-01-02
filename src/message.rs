@@ -1,3 +1,5 @@
+//! Here are some structs and enums that represent message that can be sent through channels.
+
 use crate::algebra::Fp;
 use crate::crypto;
 use crate::crypto::commit;
@@ -86,6 +88,8 @@ pub struct TripleMsg {
 }
 
 impl TripleMsg {
+    /// This function constructs a new triple message,
+    /// the shares are assumed to be correct, i.e., `a*b = c`.
     pub fn new(a: crypto::AuthShare, b: crypto::AuthShare, c: crypto::AuthShare) -> TripleMsg {
         TripleMsg { a, b, c }
     }
