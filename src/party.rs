@@ -26,8 +26,8 @@ pub struct Party {
     r_sync_chan: Receiver<SyncMsg>,
     triple_chan: Receiver<TripleMsg>,
     rand_chan: Receiver<RandShareMsg>,
-    s_party_chan: Vec<Sender<PartyMsg>>,
-    r_party_chan: Vec<Receiver<PartyMsg>>,
+    s_party_chans: Vec<Sender<PartyMsg>>,
+    r_party_chans: Vec<Receiver<PartyMsg>>,
 }
 
 impl Party {
@@ -56,8 +56,8 @@ impl Party {
                 r_sync_chan,
                 triple_chan,
                 rand_chan,
-                s_party_chan,
-                r_party_chan,
+                s_party_chans: s_party_chan,
+                r_party_chans: r_party_chan,
             };
             s.listen(reg, instructions, rng_seed)
         })
@@ -136,12 +136,12 @@ impl Party {
     }
 
     fn bcast(&self, m: PartyMsg) -> Result<(), MPCError> {
-        message::broadcast(&self.s_party_chan, m)?;
+        message::broadcast(&self.s_party_chans, m)?;
         Ok(())
     }
 
     fn recv(&self) -> Result<Vec<PartyMsg>, MPCError> {
-        let out = message::receive(&self.r_party_chan, TIMEOUT)?;
+        let out = message::receive(&self.r_party_chans, TIMEOUT)?;
         Ok(out)
     }
 
@@ -190,7 +190,7 @@ impl Party {
                         Some(e) => self.bcast(PartyMsg::Elem(e))?,
                         None => (),
                     };
-                    let e = self.r_party_chan[id].recv_timeout(TIMEOUT)?.unwrap_elem();
+                    let e = self.r_party_chans[id].recv_timeout(TIMEOUT)?.unwrap_elem();
                     sender.send(e)?
                 }
                 vm::Action::Check(openings, sender) => {
@@ -219,4 +219,114 @@ impl Party {
     }
 }
 
-// TODO add party specific tests using a mock VM
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::{auth_share, unauth_share};
+
+    const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
+    const TEST_CAP: usize = 5;
+
+    fn make_dummy_party(alpha_share: Fp, s_party_chans: Vec<Sender<PartyMsg>>, r_party_chans: Vec<Receiver<PartyMsg>>) -> Party {
+        let (dummy_s_sync_chan, _) = bounded(TEST_CAP);
+        let (_, dummy_r_sync_chan) = bounded(TEST_CAP);
+        let (_, dummy_triple_chan) = bounded(TEST_CAP);
+        let (_, dummy_rand_chan) = bounded(TEST_CAP);
+        Party {
+            id: 0,
+            alpha_share,
+            com_scheme: commit::Scheme {},
+            s_sync_chan: dummy_s_sync_chan,
+            r_sync_chan: dummy_r_sync_chan,
+            triple_chan: dummy_triple_chan,
+            rand_chan: dummy_rand_chan,
+            s_party_chans,
+            r_party_chans,
+        }
+    }
+
+    #[test]
+    fn test_mac_check() {
+        let n = 2;
+        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let alpha = rng.gen();
+        let alpha_shares = unauth_share(&alpha, n, rng);
+
+        // note:
+        // chan0 is for echoing
+        // chan1 is a black hole
+        // chan2 is for sending messages to the party from the test
+        let (s_party_chan0, r_party_chan0) = bounded(TEST_CAP);
+        let (s_party_chan1, _r_party_chan1) = bounded(TEST_CAP);
+        let (s_party_chan2, r_party_chan2) = bounded(TEST_CAP);
+        let party = make_dummy_party(
+            alpha_shares[0].clone(),
+            vec![s_party_chan0, s_party_chan1],
+            vec![r_party_chan0, r_party_chan2],
+        );
+
+        let x = rng.gen();
+        let x_shares = auth_share(&x, n, &alpha, rng);
+
+        // use the wrong commitment
+        {
+            // receive a commitment from party and send a commitment
+            let d = alpha_shares[1] * x - x_shares[1].mac;
+            let (commitment, _) = party.com_scheme.commit(d.clone(), rng);
+            s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
+
+            // get opening from party and send the *bad* opening
+            let (_, bad_opening) = party.com_scheme.commit(d, rng);
+            s_party_chan2.send(PartyMsg::Opening(bad_opening)).unwrap();
+
+            // party should fail with bad commitment
+            let result = party.mac_check(&x, &x_shares[0], rng).unwrap();
+            assert_eq!(result.unwrap_err(), MACCheckError::BadCommitment);
+
+            // empty the black hole
+            _r_party_chan1.recv().unwrap();
+            _r_party_chan1.recv().unwrap();
+        }
+
+        // use the wrong x so that the opening is not 0
+        {
+            let bad_alpha = rng.gen();
+            let x_shares_2 = auth_share(&x, n, &bad_alpha, rng);
+
+            // receive a commitment from party and send a commitment
+            let d = alpha_shares[1] * x - x_shares_2[1].mac;
+            let (commitment, opening) = party.com_scheme.commit(d.clone(), rng);
+            s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
+
+            // get opening from party and send the opening
+            s_party_chan2.send(PartyMsg::Opening(opening)).unwrap();
+
+            // party should fail with sum-not-zero since we use a bad alpha
+            let result = party.mac_check(&x, &x_shares_2[0], rng).unwrap();
+            assert_eq!(result.unwrap_err(), MACCheckError::SumIsNotZero);
+
+            // empty the black hole
+            _r_party_chan1.recv().unwrap();
+            _r_party_chan1.recv().unwrap();
+        }
+
+        // everything ok
+        {
+            // receive a commitment from party and send a commitment
+            let d = alpha_shares[1] * x - x_shares[1].mac;
+            let (commitment, opening) = party.com_scheme.commit(d.clone(), rng);
+            s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
+
+            // get opening from party and send the opening
+            s_party_chan2.send(PartyMsg::Opening(opening)).unwrap();
+
+            // everything should be ok
+            let result = party.mac_check(&x, &x_shares[0], rng).unwrap();
+            assert_eq!(result.unwrap(), ());
+
+            // empty the black hole
+            _r_party_chan1.recv().unwrap();
+            _r_party_chan1.recv().unwrap();
+        }
+    }
+}

@@ -12,7 +12,7 @@ use thiserror::Error;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
 
 /// `MACCheckError` describes the different failure states when checking a MAC.
-#[derive(Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MACCheckError {
     BadCommitment,
     SumIsNotZero,
