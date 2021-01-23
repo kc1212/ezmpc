@@ -6,31 +6,37 @@ use num_traits::{One, Pow, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
+use uint::construct_uint;
 
-type FpRepr = u128;
-const P: FpRepr = 18446744073709551557;
+construct_uint! {
+    pub struct U256(4);
+}
+
+//   340282366920938463463374607431768211297
+// = 18446744073709551457 + 18446744073709551615 << 64
+const P: U256 = U256([18446744073709551457, 18446744073709551615, 0, 0]);
 
 #[derive(Alga, Copy, Clone, PartialEq, Eq, Debug)]
 #[alga_traits(Field(Additive, Multiplicative))]
 #[alga_quickcheck]
-pub struct Fp(FpRepr); // we can only hold 64-bit values
+pub struct Fp(U256); // we can only hold 64-bit values
 
 impl From<u128> for Fp {
     fn from(x: u128) -> Self {
-        Fp(x)
+        Fp(U256::from(x))
     }
 }
 
 impl From<usize> for Fp {
     fn from(x: usize) -> Self {
-        Fp(x as u128)
+        Fp(U256::from(x))
     }
 }
 
 impl AbsDiffEq for Fp {
     type Epsilon = Fp;
     fn default_epsilon() -> Fp {
-        Fp(0)
+        Fp(U256::zero())
     }
     fn abs_diff_eq(&self, other: &Fp, _epsilon: Fp) -> bool {
         self == other
@@ -39,7 +45,7 @@ impl AbsDiffEq for Fp {
 
 impl RelativeEq for Fp {
     fn default_max_relative() -> Fp {
-        Fp(0)
+        Fp(U256::zero())
     }
 
     fn relative_eq(&self, other: &Self, _epsilon: Fp, _max_relative: Fp) -> bool {
@@ -49,7 +55,7 @@ impl RelativeEq for Fp {
 
 impl Arbitrary for Fp {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        Fp(FpRepr::arbitrary(g) % P)
+        Fp(U256::arbitrary(g) % P)
     }
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         Box::new(self.0.shrink().map(Fp))
@@ -75,13 +81,13 @@ impl TwoSidedInverse<Additive> for Fp {
 
 /// taken from https://github.com/rust-num/num-integer/blob/19ab37c59d038e05f34d7817dd3ddd2c490d982c/src/lib.rs#L165
 fn xgcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
-    let mut s: (FpRepr, FpRepr) = (0, 1);
-    let mut t: (FpRepr, FpRepr) = (1, 0);
+    let mut s: (U256, U256) = (U256::zero(), U256::one());
+    let mut t: (U256, U256) = (U256::one(), U256::zero());
     let mut r = (b.0, a.0);
 
     while !r.0.is_zero() {
         let q = r.1.clone() / r.0.clone();
-        let f = |mut r: (FpRepr, FpRepr)| {
+        let f = |mut r: (U256, U256)| {
             std::mem::swap(&mut r.0, &mut r.1);
             // r.0 = r.0 - q * r.1;
             let neg_qr1 = P - ((q * r.1) % P);
@@ -108,13 +114,13 @@ impl TwoSidedInverse<Multiplicative> for Fp {
 
 impl Identity<Additive> for Fp {
     fn identity() -> Self {
-        Fp(0)
+        Fp(U256::zero())
     }
 }
 
 impl Identity<Multiplicative> for Fp {
     fn identity() -> Self {
-        Fp(1)
+        Fp(U256::one())
     }
 }
 
@@ -182,37 +188,33 @@ impl Pow<Fp> for Fp {
     type Output = Fp;
 
     fn pow(self, rhs: Fp) -> Self::Output {
-        if P == 1 {
-            return Fp(0);
+        if P == U256::one() {
+            return Fp(U256::zero());
         }
 
         let mut base = self.0;
-        let mut result = 1u128;
+        let mut result = U256::one();
         let mut exp = rhs.0;
 
         base = base % P;
-        while exp > 0 {
-            if exp % 2 == 1 {
+        while exp > U256::zero() {
+            if exp % U256::from(2) == U256::one() {
                 result = result * base % P;
             }
-            exp = exp >> 1;
+            exp = exp >> U256::one();
             base = base * base % P
         }
         Fp(result)
     }
 }
 
-fn rand_u128<R: Rng>(rng: &mut R) -> u128 {
-    let x0: u128 = rng.gen::<u64>() as u128;
-    let x1: u128 = rng.gen::<u64>() as u128;
-    let x = x0 + (x1 << std::mem::size_of::<u128>() * 8 / 2);
-    x
-}
-
 impl Rand for Fp {
     fn rand<R: Rng>(rng: &mut R) -> Self {
-        let x = rand_u128(rng);
-        Fp(x % P)
+        let mut buf: [u64; 4] = [0; 4];
+        for i in 0..4 {
+            buf[i] = rng.gen::<u64>();
+        }
+        Fp(U256(buf) % P)
     }
 }
 
@@ -226,8 +228,10 @@ impl std::iter::Sum for Fp {
     }
 }
 
-pub fn to_le_bytes(x: &Fp) -> [u8; 16] {
-    x.0.to_le_bytes()
+pub fn to_le_bytes(x: &Fp) -> [u8; 32] {
+    let mut out: [u8; 32] = [0; 32];
+    x.0.to_little_endian(&mut out);
+    out
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ log = "0.4"
 env_logger = "0.8"
 
 # alga
+uint = { version="0.8", features=["quickcheck", "rand"] }
 alga = "0.9"
 alga_derive = "0.9"
 approx = "0.3"
