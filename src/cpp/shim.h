@@ -3,6 +3,7 @@
 
 #pragma once
 #include <memory>
+#include <vector>
 #include "NTL/ZZ.h"
 #include "NTL/ZZ_p.h"
 #include "rust/cxx.h"
@@ -18,6 +19,9 @@ void ZZ_p_init(const std::unique_ptr<ZZ> &z);
 std::unique_ptr<ZZ_p> ZZ_p_from_i64(long a);
 std::unique_ptr<ZZ_p> ZZ_p_from_str(rust::Str a);
 std::unique_ptr<ZZ_p> ZZ_p_add(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+void ZZ_p_add_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 std::unique_ptr<ZZ_p> ZZ_p_mul(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 rust::String ZZ_p_to_string(const std::unique_ptr<ZZ_p> &z);
 bool ZZ_p_eq(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+std::unique_ptr<std::vector<unsigned char>> ZZ_p_to_bytes(const std::unique_ptr<ZZ_p> &a);
+std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const std::unique_ptr<std::vector<unsigned char>> &s);
