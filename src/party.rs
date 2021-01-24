@@ -248,6 +248,7 @@ mod tests {
 
     #[test]
     fn test_mac_check() {
+        init_or_restore_context();
         let n = 2;
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let alpha = rng.gen();

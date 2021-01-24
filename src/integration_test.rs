@@ -4,7 +4,7 @@ use rand::{Rng, SeedableRng, StdRng};
 use std::thread::JoinHandle;
 use test_env_log::test;
 
-use crate::algebra::Fp;
+use crate::algebra::{Fp, init_or_restore_context};
 use crate::crypto::*;
 use crate::message::*;
 use crate::party::Party;
@@ -55,6 +55,7 @@ fn get_col<T: Clone>(matrix: &Vec<Vec<T>>, col: usize) -> Vec<T> {
 
 #[test]
 fn integration_test_clear_add() {
+    init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (_triple_sender, triple_receiver) = bounded(TEST_CAP);
     let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
@@ -85,6 +86,7 @@ fn integration_test_clear_add() {
 
 #[test]
 fn integration_test_triple() {
+    init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (triple_sender, triple_receiver) = bounded(TEST_CAP);
     let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
@@ -212,6 +214,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
 
 #[test]
 fn integration_test_open() {
+    init_or_restore_context();
     let n = 3;
     let prog = vec![
         vm::Instruction::Input(0, 0, 0),
@@ -229,6 +232,7 @@ fn integration_test_open() {
 
 #[test]
 fn integration_test_mul() {
+    init_or_restore_context();
     // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
     let n = 3;
     let prog = vec![
@@ -264,6 +268,7 @@ fn integration_test_mul() {
 
 #[test]
 fn integration_test_input_output() {
+    init_or_restore_context();
     let n = 3;
     let prog = vec![
         vm::Instruction::Input(0, 0, 0),

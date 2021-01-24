@@ -12,8 +12,8 @@ using namespace NTL;
 
 std::unique_ptr<ZZ> ZZ_from_i64(long a);
 std::unique_ptr<ZZ> ZZ_from_str(rust::Str a);
-std::unique_ptr<ZZ> ZZ_add(const std::unique_ptr<ZZ> &a, const std::unique_ptr<ZZ> &b);
 rust::String ZZ_to_string(const std::unique_ptr<ZZ> &z);
+long ZZ_num_bytes(const std::unique_ptr<ZZ> &z);
 
 void ZZ_p_init(const std::unique_ptr<ZZ> &z);
 std::unique_ptr<ZZ_p> ZZ_p_zero();
@@ -37,4 +37,4 @@ std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s);
 
 void ZZ_p_save_context_global();
 void ZZ_p_restore_context_global();
-long ZZ_p_num_bytes();
+std::unique_ptr<ZZ> ZZ_p_modulus();

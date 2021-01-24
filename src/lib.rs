@@ -38,8 +38,8 @@ mod ffi {
         type ZZ;
         fn ZZ_from_i64(a: i64) -> UniquePtr<ZZ>;
         fn ZZ_from_str(a: &str) -> UniquePtr<ZZ>;
-        fn ZZ_add(a: &UniquePtr<ZZ>, b: &UniquePtr<ZZ>) -> UniquePtr<ZZ>;
         fn ZZ_to_string(z: &UniquePtr<ZZ>) -> String;
+        fn ZZ_num_bytes(z: &UniquePtr<ZZ>) -> i64;
 
         #[namespace = "NTL"]
         type ZZ_p;
@@ -65,7 +65,6 @@ mod ffi {
 
         fn ZZ_p_save_context_global();
         fn ZZ_p_restore_context_global();
-        
-        fn ZZ_p_num_bytes() -> i64;
+        fn ZZ_p_modulus() -> UniquePtr<ZZ>;
     }
 }

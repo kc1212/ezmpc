@@ -75,10 +75,12 @@ impl TwoSidedInverse<Multiplicative> for Fp {
 }
 
 impl_op_ex!(+|a: &Fp, b:  &Fp| -> Fp {
-    AbstractMagma::<Additive>::operate(a, b)
+    Fp(ZZ_p_add(&a.0, &b.0)) // AbstractMagma::<Additive>::operate(a, b)
 });
 
-impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { AbstractMagma::<Additive>::operate(a, &TwoSidedInverse::<Additive>::two_sided_inverse(&b)) });
+impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { 
+    Fp(ZZ_p_sub(&a.0, &b.0))
+});
 
 pub fn ref_add_assign(lhs :&mut Fp, rhs: &Fp) {
     ZZ_p_add_assign(&mut lhs.0, &rhs.0)
@@ -127,7 +129,7 @@ impl One for Fp {
 impl_op_ex!(*|a: &Fp, b: &Fp| -> Fp { AbstractMagma::<Multiplicative>::operate(a, b) });
 
 impl_op_ex!(/|a: &Fp, b: &Fp| -> Fp {
-    a * TwoSidedInverse::<Multiplicative>::two_sided_inverse(b)
+    Fp(ZZ_p_div(&a.0, &b.0))
 });
 
 impl MulAssign<Fp> for Fp {
@@ -204,7 +206,7 @@ pub fn from_bytes(buf: &Vec<u8>) -> Fp {
 impl Rand for Fp {
     fn rand<R: Rng>(rng: &mut R) -> Self {
         let mut buf: Vec<u8> = Vec::new();
-        buf.resize(ZZ_p_num_bytes() as usize, 0);
+        buf.resize(ZZ_num_bytes(&ZZ_p_modulus()) as usize, 0);
         rng.fill_bytes(&mut buf);
         from_bytes(&buf)
         // Fp::one()
@@ -217,13 +219,24 @@ impl From<i64> for Fp {
     }
 }
 
+pub fn get_modulus_string() -> String {
+    ZZ_to_string(&ZZ_p_modulus())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use alga::general::Field;
+    
+    #[test]
+    fn test_modulus_string() {
+        init_or_restore_context();
+        assert_eq!(get_modulus_string(), P);
+    }
 
     #[test]
     fn test_trait_impl() {
+        init_or_restore_context();
         fn is_field<T: Field>() {}
         is_field::<Fp>();
     }

@@ -22,8 +22,8 @@ rust::String ZZ_to_string(const std::unique_ptr<ZZ> &z) {
 	return rust::String(ss.str());
 }
 
-std::unique_ptr<ZZ> ZZ_add(const std::unique_ptr<ZZ> &a, const std::unique_ptr<ZZ> &b) {
-	return std::make_unique<ZZ>(*a + *b);
+long ZZ_num_bytes(const std::unique_ptr<ZZ> &z) {
+	return NumBytes(*z);
 }
 
 // ZZ_p
@@ -127,6 +127,6 @@ void ZZ_p_restore_context_global() {
 	GLOBAL_ZZ_p_CTX.restore();
 }
 
-long ZZ_p_num_bytes() {
-	return NumBytes(ZZ_p::modulus());
+std::unique_ptr<ZZ> ZZ_p_modulus() {
+	return std::make_unique<ZZ>(ZZ_p::modulus());
 }

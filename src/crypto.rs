@@ -185,6 +185,8 @@ pub mod commit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::{init_or_restore_context};
+
     use itertools::izip;
     use num_traits::{One, Zero};
     use rand::{Rng, SeedableRng, StdRng};
@@ -193,6 +195,7 @@ mod tests {
 
     #[test]
     fn test_fp_rand() {
+        init_or_restore_context();
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let a: Fp = rng.gen();
         let b: Fp = rng.gen();
@@ -201,6 +204,7 @@ mod tests {
 
     #[test]
     fn test_unauth_sharing() {
+        init_or_restore_context();
         let n = 4;
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let secret: Fp = rng.gen();
@@ -254,6 +258,7 @@ mod tests {
 
     #[test]
     fn test_unauth_triple() {
+        init_or_restore_context();
         let n = 4;
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         {
@@ -286,6 +291,7 @@ mod tests {
 
     #[test]
     fn test_auth_arithmetic() {
+        init_or_restore_context();
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let n = 4;
         let alpha: Fp = rng.gen();
@@ -320,6 +326,7 @@ mod tests {
 
     #[test]
     fn test_auth_share() {
+        init_or_restore_context();
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let n = 4;
         let secret: Fp = rng.gen();
@@ -373,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_auth_triple() {
+        init_or_restore_context();
         let n = 4;
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         {
