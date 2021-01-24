@@ -37,3 +37,4 @@ std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s);
 
 void ZZ_p_save_context_global();
 void ZZ_p_restore_context_global();
+long ZZ_p_num_bytes();

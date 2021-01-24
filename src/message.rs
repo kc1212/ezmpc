@@ -12,16 +12,16 @@ use std::time::Duration;
 pub type PartyID = usize;
 
 /// Broadcast a message of type `T` to all the channels in `s_chans`.
-pub(crate) fn broadcast<T: Copy + Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T) -> Result<(), SendError<T>> {
+pub(crate) fn broadcast<T: Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T) -> Result<(), SendError<T>> {
     debug!("Broadcasting {:?}", m);
     for c in s_chans {
-        c.send(m)?;
+        c.send(m.clone())?;
     }
     Ok(())
 }
 
 /// Wait for one message of type `T` from every channel in `r_chans`.
-pub(crate) fn receive<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duration) -> Result<Vec<T>, RecvTimeoutError> {
+pub(crate) fn receive<T: Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duration) -> Result<Vec<T>, RecvTimeoutError> {
     let mut out: Vec<T> = Vec::new();
     for c in r_chans {
         let m = c.recv_timeout(dur)?;
@@ -33,7 +33,7 @@ pub(crate) fn receive<T: Copy + Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: 
 
 /// This is the message sent, usually using broadcast,
 /// by the synchronizer to the individual parties.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum SyncMsg {
     Start,
     Next,
@@ -41,7 +41,7 @@ pub enum SyncMsg {
 }
 
 /// This is the message send from the parties to the synchronizer.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum SyncReplyMsg {
     Ok,
     Done,
@@ -49,7 +49,7 @@ pub enum SyncReplyMsg {
 }
 
 /// This is the message sent between the parties themselves.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum PartyMsg {
     Elem(Fp),
     Com(commit::Commitment),
@@ -57,22 +57,22 @@ pub enum PartyMsg {
 }
 
 impl PartyMsg {
-    pub(crate) fn unwrap_elem(&self) -> Fp {
-        match *self {
+    pub(crate) fn unwrap_elem(self) -> Fp {
+        match self {
             PartyMsg::Elem(x) => x,
             e => panic!("expected elem, got {:?}", e),
         }
     }
 
-    pub(crate) fn unwrap_com(&self) -> commit::Commitment {
-        match *self {
+    pub(crate) fn unwrap_com(self) -> commit::Commitment {
+        match self {
             PartyMsg::Com(x) => x,
             e => panic!("expected com, got {:?}", e),
         }
     }
 
-    pub(crate) fn unwrap_opening(&self) -> commit::Opening {
-        match *self {
+    pub(crate) fn unwrap_opening(self) -> commit::Opening {
+        match self {
             PartyMsg::Opening(x) => x,
             e => panic!("expected opening, got {:?}", e),
         }
@@ -97,7 +97,7 @@ impl TripleMsg {
 
 /// This is a random sharing where only one party knows the random share,
 /// used for inputting a secret value into the MPC.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct RandShareMsg {
     pub share: crypto::AuthShare,
     pub clear: Option<Fp>,

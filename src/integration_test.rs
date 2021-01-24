@@ -60,15 +60,13 @@ fn integration_test_clear_add() {
     let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
     let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
 
-    let one = Fp::one();
-    let two = one + one;
-
+    let two = Fp::one() + Fp::one();
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
     let party_handle = Party::spawn(
         0,
         fake_alpha_share,
-        vm::Reg::from_vec(&vec![one, one], &vec![]),
+        vm::Reg::from_vec(&vec![Fp::one(), Fp::one()], &vec![]),
         prog,
         sync_chans_for_party.0[0].clone(),
         sync_chans_for_party.1[0].clone(),
@@ -106,8 +104,8 @@ fn integration_test_triple() {
         share: Fp::one(),
         mac: Fp::one(),
     };
-    let two = one + one;
-    triple_sender.send(TripleMsg::new(zero, one, two)).unwrap();
+    let two = &one + &one;
+    triple_sender.send(TripleMsg::new(zero.clone(), one.clone(), two.clone())).unwrap();
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
@@ -151,9 +149,9 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
     let triple_chans = create_chans::<TripleMsg>(n, triple_count);
     for _ in 0..triple_count {
-        let triple = auth_triple(n, &alpha, rng);
+        let (triple_a, triple_b, triple_c) = auth_triple(n, &alpha, rng);
         for (i, (s, _)) in triple_chans.iter().enumerate() {
-            s.send(TripleMsg::new(triple.0[i], triple.1[i], triple.2[i])).unwrap();
+            s.send(TripleMsg::new(triple_a[i].to_owned(), triple_b[i].to_owned(), triple_c[i].to_owned())).unwrap();
         }
     }
 
@@ -169,24 +167,25 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
                 .iter()
                 .enumerate()
                 .map(|(i, share)| RandShareMsg {
-                    share: *share,
-                    clear: if clear_id == i { Some(r) } else { None },
+                    share: share.clone(),
+                    clear: if clear_id == i { Some(r.clone()) } else { None },
                     party_id: clear_id,
                 })
                 .collect();
             for (i, (s, _)) in rand_chans.iter().enumerate() {
-                s.send(rand_shares[i]).unwrap();
+                s.send(rand_shares[i].clone()).unwrap();
             }
         }
     }
 
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
+    // TODO zip auth_shares and regs and iterate
     let party_handles: Vec<JoinHandle<_>> = (0..n)
         .map(|i| {
             let party_handle = Party::spawn(
                 i,
-                alpha_shares[i],
-                regs[i],
+                alpha_shares[i].clone(),
+                regs[i].clone(),
                 prog.clone(),
                 sync_chans_for_party.0[i].clone(),
                 sync_chans_for_party.1[i].clone(),
@@ -223,7 +222,7 @@ fn integration_test_open() {
 
     let rng = &mut StdRng::from_seed(&TEST_SEED);
     let secret = rng.gen();
-    let expected = vec![secret * Fp::from(n)]; // every party outputs the secret, so the expected sum is secret*n
+    let expected = vec![&secret * Fp::from(n as i64)]; // every party outputs the secret, so the expected sum is secret*n
     let regs = vec![vm::Reg::from_vec(&vec![secret], &vec![]), vm::Reg::empty(), vm::Reg::empty()];
     generic_integration_test(n, prog, regs, expected, rng);
 }
@@ -253,7 +252,7 @@ fn integration_test_mul() {
     let rng = &mut StdRng::from_seed(&TEST_SEED);
     let input_0: Fp = rng.gen();
     let input_1: Fp = rng.gen();
-    let expected = vec![input_0 * input_1];
+    let expected = vec![&input_0 * &input_1];
 
     let regs = vec![
         vm::Reg::from_vec(&vec![input_0, Fp::zero()], &vec![]),
@@ -280,7 +279,7 @@ fn integration_test_input_output() {
     let input_0: Fp = rng.gen();
     let input_1: Fp = rng.gen();
     let input_2: Fp = rng.gen();
-    let expected = vec![input_0, input_1, input_2];
+    let expected = vec![input_0.clone(), input_1.clone(), input_2.clone()];
     let regs = vec![
         vm::Reg::from_vec(&vec![input_0, Fp::zero(), Fp::zero()], &vec![]),
         vm::Reg::from_vec(&vec![Fp::zero(), input_1, Fp::zero()], &vec![]),

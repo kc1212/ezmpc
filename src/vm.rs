@@ -1,6 +1,6 @@
 //! The virtual machine that executes instructions on secret-shared data is defined in this module.
 
-use crate::algebra::Fp;
+use crate::algebra::{Fp, init_or_restore_context};
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
@@ -8,16 +8,19 @@ use crate::message::{PartyID, RandShareMsg, TripleMsg};
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use std::cmp::min;
 use std::collections::HashMap;
-use std::ops;
+use std::default::Default;
 use std::thread;
 use std::thread::JoinHandle;
 
 pub(crate) const DEFAULT_CAP: usize = 5;
 
+// for some reason Default trait for arrays only works up to 32 elements
+const REG_SIZE: usize = 32; 
+
 type RegAddr = usize;
 
 /// Reg is the register stored by the VM.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Reg {
     clear: [Option<Fp>; REG_SIZE],
     secret: [Option<AuthShare>; REG_SIZE],
@@ -27,28 +30,26 @@ impl Reg {
     /// Construct an empty register.
     pub fn empty() -> Reg {
         Reg {
-            clear: [None; REG_SIZE],
-            secret: [None; REG_SIZE],
+            clear: Default::default(),
+            secret: Default::default(),
         }
     }
 
     /// Construct a register from a vector of clear values and authenticated secret shares.
     pub fn from_vec(vclear: &Vec<Fp>, vsecret: &Vec<AuthShare>) -> Reg {
-        let mut clear = [None; REG_SIZE];
-        let mut secret = [None; REG_SIZE];
+        let mut clear: [Option<Fp>; REG_SIZE] = Default::default();
+        let mut secret: [Option<AuthShare>; REG_SIZE] = Default::default();
         let cn = min(vclear.len(), REG_SIZE);
         for i in 0..cn {
-            clear[i] = Some(vclear[i]);
+            clear[i] = Some(vclear[i].clone());
         }
         let sn = min(vsecret.len(), REG_SIZE);
         for i in 0..sn {
-            secret[i] = Some(vsecret[i]);
+            secret[i] = Some(vsecret[i].clone());
         }
         Reg { clear, secret }
     }
 }
-
-const REG_SIZE: usize = 128;
 
 /// The stateful virtual machine that execute instructions defined in `Instruction`.
 /// It communicates with the outside world using channels if it needs additional information.
@@ -83,7 +84,7 @@ pub enum Action {
 /// * `S` (e.g. `SAdd`): These operate on secret registers.
 /// * `M` (e.g. `MAdd`): These operate on secret and clear registers.
 /// Most instructions store the result in the register of the first operand.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum Instruction {
     /// `CAdd(c0, c1, c2)` performs `creg[c0] <- creg[c1] + creg[c2]` in the clear.
     CAdd(RegAddr, RegAddr, RegAddr),
@@ -139,6 +140,7 @@ impl VM {
         s_chan: Sender<Action>,
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
+            init_or_restore_context();
             let mut vm = VM::new(id, alpha_share, reg, triple_chan, rand_chan);
             vm.listen(r_chan, s_chan)
         })
@@ -163,17 +165,17 @@ impl VM {
         loop {
             let inst = r_chan.recv_timeout(TIMEOUT)?;
             match inst {
-                Instruction::CAdd(r0, r1, r2) => self.do_clear_op(r0, r1, r2, ops::Add::add)?,
-                Instruction::CSub(r0, r1, r2) => self.do_clear_op(r0, r1, r2, ops::Sub::sub)?,
-                Instruction::CMul(r0, r1, r2) => self.do_clear_op(r0, r1, r2, ops::Mul::mul)?,
-                Instruction::SAdd(r0, r1, r2) => self.do_secret_op(r0, r1, r2, ops::Add::add)?,
-                Instruction::SSub(r0, r1, r2) => self.do_secret_op(r0, r1, r2, ops::Sub::sub)?,
+                Instruction::CAdd(r0, r1, r2) => self.do_clear_op(r0, r1, r2, |x, y| x + y)?,
+                Instruction::CSub(r0, r1, r2) => self.do_clear_op(r0, r1, r2, |x, y| x - y)?,
+                Instruction::CMul(r0, r1, r2) => self.do_clear_op(r0, r1, r2, |x, y| x * y)?,
+                Instruction::SAdd(r0, r1, r2) => self.do_secret_op(r0, r1, r2, |x, y| x + y)?,
+                Instruction::SSub(r0, r1, r2) => self.do_secret_op(r0, r1, r2, |x, y| x - y)?,
                 Instruction::MAdd(r0, r1, r2, id) => self.do_mixed_add(r0, r1, r2, id)?,
                 Instruction::MMul(r0, r1, r2) => self.do_mixed_mul(r0, r1, r2)?,
                 Instruction::Input(r0, r1, id) => self.do_input(r0, r1, id, &s_chan)?,
                 Instruction::Triple(r0, r1, r2) => self.do_triple(r0, r1, r2)?,
                 Instruction::Open(to, from) => self.do_open(to, from, &s_chan)?,
-                Instruction::COutput(reg) => output.push(opt_to_res(self.reg.clear[reg])?),
+                Instruction::COutput(reg) => output.push(opt_to_res(self.reg.clear[reg].clone())?),
                 Instruction::SOutput(reg) => {
                     let result = self.do_secret_output(reg, &s_chan)?;
                     output.push(result);
@@ -193,32 +195,38 @@ impl VM {
 
     fn do_clear_op<F>(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, op: F) -> Result<(), MPCError>
     where
-        F: Fn(Fp, Fp) -> Fp,
+        F: Fn(&Fp, &Fp) -> Fp,
     {
-        let c = self.reg.clear[r1].zip(self.reg.clear[r2]).map(|(a, b)| op(a, b));
+        let c: Option<Fp> = self.reg.clear[r1].as_ref()
+            .zip(self.reg.clear[r2].as_ref())
+            .map(|(a, b)| op(a, b));
         self.reg.clear[r0] = Some(opt_to_res(c)?);
         Ok(())
     }
 
     fn do_secret_op<F>(&mut self, r0: RegAddr, r1: RegAddr, r2: RegAddr, op: F) -> Result<(), MPCError>
     where
-        F: Fn(AuthShare, AuthShare) -> AuthShare,
+        F: Fn(&AuthShare, &AuthShare) -> AuthShare,
     {
-        let c = self.reg.secret[r1].zip(self.reg.secret[r2]).map(|(a, b)| op(a, b));
+        let c = self.reg.secret[r1].as_ref()
+            .zip(self.reg.secret[r2].as_ref())
+            .map(|(a, b)| op(a, b));
         self.reg.secret[r0] = Some(opt_to_res(c)?);
         Ok(())
     }
 
     fn do_mixed_add(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr, id: PartyID) -> Result<(), MPCError> {
-        let c = self.reg.secret[s_r1]
-            .zip(self.reg.clear[c_r2])
+        let c = self.reg.secret[s_r1].as_ref()
+            .zip(self.reg.clear[c_r2].as_ref())
             .map(|(a, b)| a.add_clear(&b, &self.alpha_share, self.id == id));
         self.reg.secret[s_r0] = Some(opt_to_res(c)?);
         Ok(())
     }
 
     fn do_mixed_mul(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr) -> Result<(), MPCError> {
-        let c = self.reg.secret[s_r1].zip(self.reg.clear[c_r2]).map(|(a, b)| a.mul_clear(&b));
+        let c = self.reg.secret[s_r1].as_ref()
+            .zip(self.reg.clear[c_r2].as_ref())
+            .map(|(a, b)| a.mul_clear(&b));
         self.reg.secret[s_r0] = Some(opt_to_res(c)?);
         Ok(())
     }
@@ -253,7 +261,7 @@ impl VM {
 
         let (s, r) = bounded(1);
         if self.id == id {
-            let x = opt_to_res(self.reg.clear[r1])?;
+            let x = opt_to_res(self.reg.clear[r1].clone())?;
             let e = x - opt_to_res(rand_share.clear)?;
             s_chan.send(Action::Input(id, Some(e), s))?;
         } else {
@@ -275,18 +283,18 @@ impl VM {
     }
 
     fn do_open(&mut self, to: RegAddr, from: RegAddr, s_chan: &Sender<Action>) -> Result<(), MPCError> {
-        match self.reg.secret[from] {
+        match &self.reg.secret[from] {
             None => Err(MPCError::EmptyError),
             Some(for_opening) => {
                 let (s, r) = bounded(1);
-                s_chan.send(Action::Open(for_opening.share, s))?;
+                s_chan.send(Action::Open(for_opening.share.clone(), s))?;
 
                 // wait for the response
                 let opened: Fp = r.recv_timeout(TIMEOUT)?;
-                self.reg.clear[to] = Some(opened);
+                self.reg.clear[to] = Some(opened.clone());
 
                 // store the opened value for mac_check later
-                self.partial_openings.push((opened, for_opening));
+                self.partial_openings.push((opened.clone(), for_opening.clone()));
                 Ok(())
             }
         }
@@ -294,20 +302,21 @@ impl VM {
 
     fn do_secret_output(&mut self, reg: RegAddr, s_chan: &Sender<Action>) -> Result<Fp, MPCError> {
         // first do the open step, just like process_open, but don't store the value
-        let share = match self.reg.secret[reg] {
+        let reg_val = self.reg.secret[reg].clone();
+        match reg_val {
             None => Err(MPCError::EmptyError),
             Some(x) => {
                 let (s, r) = bounded(1);
-                s_chan.send(Action::Open(x.share, s))?;
+                s_chan.send(Action::Open(x.share.clone(), s))?;
                 let opened: Fp = r.recv_timeout(TIMEOUT)?;
 
-                self.partial_openings.push((opened, x));
-                Ok(x)
-            }
-        }?;
+                self.partial_openings.push((opened, x.clone()));
 
-        self.do_mac_check(s_chan)?;
-        Ok(share.share)
+                self.do_mac_check(s_chan)?;
+                Ok(x.share)
+            }
+        }
+
     }
 
     fn do_mac_check(&mut self, s_chan: &Sender<Action>) -> Result<(), MPCError> {
@@ -331,7 +340,7 @@ mod tests {
         let vv: Vec<_> = vsecret
             .iter()
             .map(|x| AuthShare {
-                share: *x,
+                share: x.clone(),
                 mac: Zero::zero(),
             })
             .collect();
@@ -352,7 +361,7 @@ mod tests {
         let fake_alpha_share = Fp::zero();
         let handle = VM::spawn(0, fake_alpha_share, reg, triple_chan, rand_chan, r_instruction_chan, s_action_chan);
         for instruction in prog {
-            s_instruction_chan.send(instruction)?;
+            s_instruction_chan.send(instruction.clone())?;
 
             loop {
                 // these replies are obviously not the correct implementation, they're only here for testing
@@ -387,7 +396,7 @@ mod tests {
         let reg = unauth_vec_to_reg(&vec![], &vec![a, b]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
-        result[0]
+        result[0].to_owned()
     }
 
     fn compute_clear_op<F>(a: Fp, b: Fp, op: F) -> Fp
@@ -398,42 +407,42 @@ mod tests {
         let reg = Reg::from_vec(&vec![a, b], &vec![]);
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
-        result[0]
+        result[0].to_owned()
     }
 
     #[quickcheck]
     fn prop_clear_add(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CAdd(x, y, z);
-        compute_clear_op(x, y, op) == x + y
+        &x + &y == compute_clear_op(x, y, op)
     }
 
     #[quickcheck]
     fn prop_clear_mul(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CMul(x, y, z);
-        compute_clear_op(x, y, op) == x * y
+        &x * &y == compute_clear_op(x, y, op)
     }
 
     #[quickcheck]
     fn prop_clear_sub(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::CSub(x, y, z);
-        compute_clear_op(x, y, op) == y - x
+        &y - &x == compute_clear_op(x, y, op)
     }
 
     #[quickcheck]
     fn prop_secret_add(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::SAdd(x, y, z);
-        compute_secret_op(x, y, op) == x + y
+        &x + &y == compute_secret_op(x, y, op)
     }
 
     #[quickcheck]
     fn prop_secret_sub(x: Fp, y: Fp) -> bool {
         let op = |x, y, z| Instruction::SSub(x, y, z);
-        compute_secret_op(x, y, op) == y - x
+        &y - &x == compute_secret_op(x, y, op)
     }
 
     #[quickcheck]
     fn prop_mixed_add(s1: Fp, c2: Fp, id: PartyID) -> bool {
-        let reg = unauth_vec_to_reg(&vec![c2], &vec![s1]);
+        let reg = unauth_vec_to_reg(&vec![c2.clone()], &vec![s1.clone()]);
 
         // use id = 0
         let prog = vec![Instruction::MAdd(1, 0, 0, id), Instruction::SOutput(1), Instruction::Stop];
@@ -448,7 +457,7 @@ mod tests {
 
     #[quickcheck]
     fn prop_mixed_mul(s1: Fp, c2: Fp) -> bool {
-        let reg = unauth_vec_to_reg(&vec![c2], &vec![s1]);
+        let reg = unauth_vec_to_reg(&vec![c2.clone()], &vec![s1.clone()]);
 
         let prog = vec![Instruction::MMul(1, 0, 0), Instruction::SOutput(1), Instruction::Stop];
 
@@ -460,7 +469,7 @@ mod tests {
     #[quickcheck]
     fn prop_open(s: Fp) -> bool {
         let prog = vec![Instruction::Open(0, 0), Instruction::COutput(0), Instruction::Stop];
-        let reg = unauth_vec_to_reg(&vec![], &vec![s]);
+        let reg = unauth_vec_to_reg(&vec![], &vec![s.clone()]);
 
         let result = simple_vm_runner(prog, reg).unwrap();
 
@@ -484,7 +493,7 @@ mod tests {
         let a_share = AuthShare { share: a, mac: Fp::zero() };
         let b_share = AuthShare { share: b, mac: Fp::zero() };
         let c_share = AuthShare { share: c, mac: Fp::zero() };
-        s_triple_chan.send(TripleMsg::new(a_share, b_share, c_share)).unwrap();
+        s_triple_chan.send(TripleMsg::new(a_share.clone(), b_share.clone(), c_share.clone())).unwrap();
         let result = vm_runner(prog, Reg::empty(), r_triple_chan, dummy_rand_chan).unwrap();
         result.len() == 3 && result[0] == a_share.share && result[1] == b_share.share && result[2] == c_share.share
     }
@@ -501,11 +510,11 @@ mod tests {
                 share: r_share,
                 mac: Fp::zero(),
             },
-            clear: Some(r),
+            clear: Some(r.clone()),
             party_id: 0,
         };
-        s_rand_chan.send(rand_msg).unwrap();
-        let result = vm_runner(prog, unauth_vec_to_reg(&vec![x], &vec![]), dummy_triple_chan, r_rand_chan).unwrap();
+        s_rand_chan.send(rand_msg.clone()).unwrap();
+        let result = vm_runner(prog, unauth_vec_to_reg(&vec![x.clone()], &vec![]), dummy_triple_chan, r_rand_chan).unwrap();
 
         // for rand_msg, the clear value is r, with a share of r-1
         // the vm computes e = x - r

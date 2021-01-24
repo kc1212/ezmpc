@@ -2,7 +2,7 @@
 //! It assumes perfect channels for sending and receiving messages.
 //! The actual networking layer is handled by an outer layer.
 
-use crate::algebra::Fp;
+use crate::algebra::{Fp, init_or_restore_context};
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
@@ -48,6 +48,7 @@ impl Party {
         rng_seed: [usize; 4],
     ) -> thread::JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
+            init_or_restore_context();
             let s = Party {
                 id,
                 alpha_share,
@@ -75,7 +76,7 @@ impl Party {
         let (s_action_chan, r_action_chan) = bounded(vm::DEFAULT_CAP);
         let vm_handler: thread::JoinHandle<_> = vm::VM::spawn(
             self.id,
-            self.alpha_share,
+            self.alpha_share.clone(),
             reg,
             r_inner_triple_chan,
             r_inner_rand_chan,
@@ -112,11 +113,11 @@ impl Party {
                             if pc >= prog.len() {
                                 panic!("instruction counter overflow");
                             }
-                            let instruction = prog[pc];
+                            let instruction = prog[pc].clone();
                             pc += 1;
 
                             debug!("[{}] Sending instruction {:?} to VM", self.id, instruction);
-                            s_inst_chan.send(instruction)?;
+                            s_inst_chan.send(instruction.clone())?;
                             self.handle_vm_actions(&r_action_chan, rng)?;
 
                             if instruction == vm::Instruction::Stop {
@@ -147,15 +148,15 @@ impl Party {
 
     fn mac_check(&self, x: &Fp, share: &AuthShare, rng: &mut impl Rng) -> Result<Result<(), MACCheckError>, MPCError> {
         // let d = alpha_i * x - mac_i
-        let d = self.alpha_share * x - share.mac;
+        let d = &self.alpha_share * x - &share.mac;
         // commit d
         let (d_com, d_open) = self.com_scheme.commit(d, rng);
         self.bcast(PartyMsg::Com(d_com))?;
         // get commitment from others
-        let d_coms: Vec<_> = self.recv()?.iter().map(|x| x.unwrap_com()).collect();
+        let d_coms: Vec<_> = self.recv()?.into_iter().map(|x| x.unwrap_com()).collect();
         // commit-open d and collect them
         self.bcast(PartyMsg::Opening(d_open))?;
-        let d_opens: Vec<_> = self.recv()?.iter().map(|x| x.unwrap_opening()).collect();
+        let d_opens: Vec<_> = self.recv()?.into_iter().map(|x| x.unwrap_opening()).collect();
         // verify all the commitments of d
         // and check they sum to 0
         let coms_ok = d_opens.iter().zip(d_coms).map(|(o, c)| self.com_scheme.verify(&o, &c)).all(|x| x);
@@ -181,7 +182,7 @@ impl Party {
                 }
                 vm::Action::Open(x, sender) => {
                     self.bcast(PartyMsg::Elem(x))?;
-                    let result = self.recv()?.iter().map(|x| x.unwrap_elem()).sum();
+                    let result = self.recv()?.into_iter().map(|x| x.unwrap_elem()).sum();
                     debug!("[{}] Partially opened {:?}", self.id, result);
                     sender.send(result)?
                 }
@@ -271,7 +272,7 @@ mod tests {
         // use the wrong commitment
         {
             // receive a commitment from party and send a commitment
-            let d = alpha_shares[1] * x - x_shares[1].mac;
+            let d = &alpha_shares[1] * &x - &x_shares[1].mac;
             let (commitment, _) = party.com_scheme.commit(d.clone(), rng);
             s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
 
@@ -294,7 +295,7 @@ mod tests {
             let x_shares_2 = auth_share(&x, n, &bad_alpha, rng);
 
             // receive a commitment from party and send a commitment
-            let d = alpha_shares[1] * x - x_shares_2[1].mac;
+            let d = &alpha_shares[1] * &x - &x_shares_2[1].mac;
             let (commitment, opening) = party.com_scheme.commit(d.clone(), rng);
             s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
 
@@ -313,7 +314,7 @@ mod tests {
         // everything ok
         {
             // receive a commitment from party and send a commitment
-            let d = alpha_shares[1] * x - x_shares[1].mac;
+            let d = &alpha_shares[1] * &x - &x_shares[1].mac;
             let (commitment, opening) = party.com_scheme.commit(d.clone(), rng);
             s_party_chan2.send(PartyMsg::Com(commitment)).unwrap();
 

@@ -1,11 +1,11 @@
-use crate::algebra::Fp;
+use crate::algebra::{Fp, ref_add_assign};
 
 use auto_ops::*;
 use num_traits::Zero;
 use rand::Rng;
 
 /// This structure represents an authenticated share.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct AuthShare {
     pub share: Fp,
     pub mac: Fp,
@@ -15,8 +15,8 @@ impl AuthShare {
     /// This function multiplies an authenticated share by a clear value.
     pub fn mul_clear(&self, rhs: &Fp) -> Self {
         Self {
-            share: self.share * *rhs,
-            mac: self.mac * *rhs,
+            share: &self.share * rhs,
+            mac: &self.mac * rhs,
         }
     }
 
@@ -26,24 +26,24 @@ impl AuthShare {
     pub fn add_clear(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
         let mut out = self.clone();
         if update_share {
-            out.share += *rhs;
+            ref_add_assign(&mut out.share, rhs); // out.share += rhs
         }
-        out.mac += *alpha_share * *rhs;
+        out.mac += alpha_share * rhs;
         out
     }
 }
 
 impl_op_ex!(+|a: &AuthShare, b: &AuthShare| -> AuthShare {
     AuthShare {
-        share: a.share + b.share,
-        mac: a.mac + b.mac,
+        share: &a.share + &b.share,
+        mac: &a.mac + &b.mac,
     }
 });
 
 impl_op_ex!(-|a: &AuthShare, b: &AuthShare| -> AuthShare {
     AuthShare {
-        share: a.share - b.share,
-        mac: a.mac - b.mac,
+        share: &a.share - &b.share,
+        mac: &a.mac - &b.mac,
     }
 });
 
@@ -54,11 +54,11 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     let mut sum = Fp::zero();
     for i in 0..(n - 1) {
         let r: Fp = rng.gen();
-        sum += r;
+        ref_add_assign(&mut sum, &r); // sum += r
         out[i] = r;
     }
 
-    let final_share = *secret - sum;
+    let final_share = secret - &sum;
     out[n - 1] = final_share;
     out
 }
@@ -68,7 +68,7 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
 pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
     let mut out = Fp::zero();
     for share in shares {
-        out += *share;
+        ref_add_assign(&mut out, share); // out += share;
     }
     out
 }
@@ -78,15 +78,15 @@ pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
 pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>) {
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
-    let c: Fp = a * b;
+    let c: Fp = &a * &b;
     (unauth_share(&a, n, rng), unauth_share(&b, n, rng), unauth_share(&c, n, rng))
 }
 
 /// Share a field element `secret` into `n` shares,
 /// where `alpha` is the global MAC key.
 pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<AuthShare> {
-    let mac_on_secret = *secret * *alpha;
-    let reg_shares = unauth_share(&secret, n, rng);
+    let mac_on_secret = secret * alpha;
+    let reg_shares = unauth_share(secret, n, rng);
     let mac_shares = unauth_share(&mac_on_secret, n, rng);
 
     reg_shares
@@ -100,7 +100,7 @@ pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<
 pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
     let a: Fp = rng.gen();
     let b: Fp = rng.gen();
-    let c: Fp = a * b;
+    let c: Fp = &a * &b;
     (
         auth_share(&a, n, alpha, rng),
         auth_share(&b, n, alpha, rng),
@@ -109,7 +109,7 @@ pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>,
 }
 
 pub mod commit {
-    use crate::algebra::{to_le_bytes, Fp};
+    use crate::algebra::{to_bytes, Fp};
 
     use rand::Rng;
     use sha3;
@@ -117,7 +117,7 @@ pub mod commit {
     use std::fmt;
 
     /// This is the structure that represents a commitment.
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct Commitment {
         c: [u8; 32],
     }
@@ -131,7 +131,7 @@ pub mod commit {
     }
 
     /// This is the structure that represents an opening of a commitment.
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct Opening {
         v: Fp,
         r: [u8; 32],
@@ -149,11 +149,11 @@ pub mod commit {
     impl Opening {
         /// Returns the committed value.
         pub fn get_v(&self) -> Fp {
-            self.v
+            self.v.clone()
         }
     }
 
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Clone, Debug)]
     pub struct Scheme {
         // See Fig. 1 of https://eprint.iacr.org/2012/642.pdf
     }
@@ -162,7 +162,7 @@ pub mod commit {
         /// Generates a commitment for `secret` and an opening.
         pub fn commit(&self, secret: Fp, rng: &mut impl Rng) -> (Commitment, Opening) {
             let r: [u8; 32] = rng.gen();
-            let v = to_le_bytes(&secret);
+            let v = to_bytes(&secret);
             let mut hasher = sha3::Sha3_256::new();
             hasher.update(&r);
             hasher.update(&v);
@@ -173,7 +173,7 @@ pub mod commit {
         /// Use the commitment `com` and the opening `opening` to verify whether the committer honestly opened its value.
         pub fn verify(&self, opening: &Opening, com: &Commitment) -> bool {
             let mut hasher = sha3::Sha3_256::new();
-            let v = to_le_bytes(&opening.v);
+            let v = to_bytes(&opening.v);
             hasher.update(&opening.r);
             hasher.update(&v);
             let c_prime: [u8; 32] = hasher.finalize().into();
@@ -213,11 +213,11 @@ mod tests {
         let shares2 = unauth_share(&secret2, n, rng);
 
         let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| x + y).collect();
-        assert_eq!(secret + secret2, unauth_combine(&new_shares));
+        assert_eq!(&secret + &secret2, unauth_combine(&new_shares));
 
         let const_term: Fp = rng.gen();
-        assert_eq!(secret * const_term, unauth_combine(&shares.iter().map(|s| s * const_term).collect()));
-        assert_eq!(secret2 * const_term, unauth_combine(&shares2.iter().map(|s| s * const_term).collect()));
+        assert_eq!(&secret * &const_term, unauth_combine(&shares.iter().map(|s| s * &const_term).collect()));
+        assert_eq!(&secret2 * &const_term, unauth_combine(&shares2.iter().map(|s| s * &const_term).collect()));
     }
 
     fn unauth_triple_protocol(x: Fp, y: Fp, n: usize, rng: &mut impl Rng) {
@@ -234,16 +234,16 @@ mod tests {
 
         let e = unauth_combine(&e_boxes);
         let d = unauth_combine(&d_boxes);
-        assert_eq!(e, x - unauth_combine(&a_boxes));
-        assert_eq!(d, y - unauth_combine(&b_boxes));
+        assert_eq!(e, &x - &unauth_combine(&a_boxes));
+        assert_eq!(d, &y - &unauth_combine(&b_boxes));
 
-        let ed = e * d;
+        let ed = &e * &d;
 
-        let z_boxes = izip!(c_boxes, b_boxes, a_boxes)
+        let z_boxes = izip!(&c_boxes, &b_boxes, &a_boxes)
             .map(|(c_box, b_box, a_box)| {
-                let mut v = c_box;
-                v += e * b_box;
-                v += d * a_box;
+                let mut v = c_box.clone();
+                v += &e * b_box;
+                v += &d * a_box;
                 v
             })
             .collect();
@@ -269,10 +269,11 @@ mod tests {
     }
 
     fn auth_combine_no_assert(shares: &Vec<AuthShare>, alpha_shares: &Vec<Fp>) -> (bool, Fp) {
-        let x = unauth_combine(&shares.iter().map(|x| x.share).collect());
+        let x = unauth_combine(&shares.iter()
+            .map(|x| x.share.clone()).collect());
 
         // in practice these ds values are committed first before revealing
-        let ds: Vec<_> = alpha_shares.into_iter().zip(shares).map(|(a, share)| a * x - share.mac).collect();
+        let ds: Vec<_> = alpha_shares.into_iter().zip(shares).map(|(a, share)| a * &x - &share.mac).collect();
         let d = unauth_combine(&ds);
         (Fp::zero() == d, x)
     }
@@ -298,15 +299,15 @@ mod tests {
 
         // check a+b
         let a_add_b_shares: Vec<_> = a_shares.iter().zip(&b_shares).map(|(a, b)| a + b).collect();
-        assert_eq!(a + b, auth_combine(&a_add_b_shares, &alpha_shares));
+        assert_eq!(&a + &b, auth_combine(&a_add_b_shares, &alpha_shares));
 
         // check a-b
         let a_sub_b_shares: Vec<_> = a_shares.iter().zip(&b_shares).map(|(a, b)| a - b).collect();
-        assert_eq!(a - b, auth_combine(&a_sub_b_shares, &alpha_shares));
+        assert_eq!(&a - &b, auth_combine(&a_sub_b_shares, &alpha_shares));
 
         // check mul by constant
         let mul_const_shares: Vec<_> = a_shares.iter().map(|share| share.mul_clear(&const_c)).collect();
-        assert_eq!(a * const_c, auth_combine(&mul_const_shares, &alpha_shares));
+        assert_eq!(&a * &const_c, auth_combine(&mul_const_shares, &alpha_shares));
 
         // check add by constant
         let add_const_shares: Vec<_> = b_shares
@@ -353,10 +354,10 @@ mod tests {
 
         let e = auth_combine(&e_boxes, &alpha_shares);
         let d = auth_combine(&d_boxes, &alpha_shares);
-        assert_eq!(e, x - auth_combine(&a_boxes, &alpha_shares));
-        assert_eq!(d, y - auth_combine(&b_boxes, &alpha_shares));
+        assert_eq!(e, &x - &auth_combine(&a_boxes, &alpha_shares));
+        assert_eq!(d, &y - &auth_combine(&b_boxes, &alpha_shares));
 
-        let ed = e * d;
+        let ed = &e * &d;
 
         let z_boxes: Vec<_> = izip!(0..n, &alpha_shares, &c_boxes, &b_boxes, &a_boxes)
             .map(|(i, alpha_share, c_box, b_box, a_box)| {
@@ -400,7 +401,7 @@ mod tests {
     fn prop_bad_commitment(secret: Fp) -> bool {
         let rng = &mut StdRng::from_seed(&TEST_SEED);
         let scheme = commit::Scheme {};
-        let (commitment, _) = scheme.commit(secret, rng);
+        let (commitment, _) = scheme.commit(secret.clone(), rng);
 
         let secret_bad = secret + Fp::one();
         let (_, bad_opening) = scheme.commit(secret_bad, rng);

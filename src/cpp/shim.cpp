@@ -126,3 +126,7 @@ void ZZ_p_save_context_global() {
 void ZZ_p_restore_context_global() {
 	GLOBAL_ZZ_p_CTX.restore();
 }
+
+long ZZ_p_num_bytes() {
+	return NumBytes(ZZ_p::modulus());
+}

@@ -2,119 +2,75 @@ use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedI
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::*;
-use num_traits::{One, Pow, Zero};
+use cxx;
+use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
+use std::fmt;
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
+use std::sync::Once;
 
-type FpRepr = u128;
-const P: FpRepr = 18446744073709551557;
+use crate::ffi::*;
 
-#[derive(Alga, Copy, Clone, PartialEq, Eq, Debug)]
+static INIT_P: Once = Once::new();
+static P: &str = "340282366920938463463374607431768211297";
+
+#[derive(Alga)]
 #[alga_traits(Field(Additive, Multiplicative))]
 #[alga_quickcheck]
-pub struct Fp(FpRepr); // we can only hold 64-bit values
+pub struct Fp(cxx::UniquePtr<ZZ_p>); // we can only hold 64-bit values
 
-impl From<u128> for Fp {
-    fn from(x: u128) -> Self {
-        Fp(x)
+impl Clone for Fp {
+    fn clone(&self) -> Self {
+        Fp(ZZ_p_clone(&self.0))
     }
 }
 
-impl From<usize> for Fp {
-    fn from(x: usize) -> Self {
-        Fp(x as u128)
+impl PartialEq for Fp {
+    fn eq(&self, other: &Self) -> bool {
+        ZZ_p_eq(&self.0, &other.0)
     }
 }
 
-impl AbsDiffEq for Fp {
-    type Epsilon = Fp;
-    fn default_epsilon() -> Fp {
-        Fp(0)
-    }
-    fn abs_diff_eq(&self, other: &Fp, _epsilon: Fp) -> bool {
-        self == other
-    }
-}
-
-impl RelativeEq for Fp {
-    fn default_max_relative() -> Fp {
-        Fp(0)
-    }
-
-    fn relative_eq(&self, other: &Self, _epsilon: Fp, _max_relative: Fp) -> bool {
-        self == other
-    }
-}
-
-impl Arbitrary for Fp {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        Fp(FpRepr::arbitrary(g) % P)
-    }
-    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(self.0.shrink().map(Fp))
-    }
-}
-
-impl AbstractMagma<Additive> for Fp {
-    fn operate(&self, right: &Self) -> Self {
-        Fp((self.0 + right.0) % P)
-    }
-}
-impl AbstractMagma<Multiplicative> for Fp {
-    fn operate(&self, right: &Self) -> Self {
-        Fp((self.0 * right.0) % P)
-    }
-}
-
-impl TwoSidedInverse<Additive> for Fp {
-    fn two_sided_inverse(&self) -> Self {
-        Fp(P - self.0)
-    }
-}
-
-/// taken from https://github.com/rust-num/num-integer/blob/19ab37c59d038e05f34d7817dd3ddd2c490d982c/src/lib.rs#L165
-fn xgcd(a: Fp, b: Fp) -> (Fp, Fp, Fp) {
-    let mut s: (FpRepr, FpRepr) = (0, 1);
-    let mut t: (FpRepr, FpRepr) = (1, 0);
-    let mut r = (b.0, a.0);
-
-    while !r.0.is_zero() {
-        let q = r.1.clone() / r.0.clone();
-        let f = |mut r: (FpRepr, FpRepr)| {
-            std::mem::swap(&mut r.0, &mut r.1);
-            // r.0 = r.0 - q * r.1;
-            let neg_qr1 = P - ((q * r.1) % P);
-            r.0 = (r.0 + neg_qr1) % P;
-            r
-        };
-        r = f(r);
-        s = f(s);
-        t = f(t);
-    }
-    (Fp(r.1), Fp(s.1), Fp(t.1))
-}
-
-impl TwoSidedInverse<Multiplicative> for Fp {
-    fn two_sided_inverse(&self) -> Self {
-        let (gcd, x, _) = xgcd(*self, Fp(P));
-        if gcd == One::one() {
-            x
-        } else {
-            panic!("multiplicative inverse does not exist")
-        }
+impl fmt::Debug for Fp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", ZZ_p_to_string(&self.0))
     }
 }
 
 impl Identity<Additive> for Fp {
     fn identity() -> Self {
-        Fp(0)
+        Fp(ZZ_p_zero())
     }
 }
 
 impl Identity<Multiplicative> for Fp {
     fn identity() -> Self {
-        Fp(1)
+        Fp(ZZ_p_from_i64(1))
+    }
+}
+
+impl AbstractMagma<Additive> for Fp {
+    fn operate(&self, right: &Self) -> Self {
+        Fp(ZZ_p_add(&self.0, &right.0))
+    }
+}
+
+impl AbstractMagma<Multiplicative> for Fp {
+    fn operate(&self, right: &Self) -> Self {
+        Fp(ZZ_p_mul(&self.0, &right.0))
+    }
+}
+
+impl TwoSidedInverse<Additive> for Fp {
+    fn two_sided_inverse(&self) -> Self {
+        Fp(ZZ_p_neg(&self.0))
+    }
+}
+
+impl TwoSidedInverse<Multiplicative> for Fp {
+    fn two_sided_inverse(&self) -> Self {
+        Fp(ZZ_p_inv(&self.0))
     }
 }
 
@@ -124,15 +80,23 @@ impl_op_ex!(+|a: &Fp, b:  &Fp| -> Fp {
 
 impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { AbstractMagma::<Additive>::operate(a, &TwoSidedInverse::<Additive>::two_sided_inverse(&b)) });
 
+pub fn ref_add_assign(lhs :&mut Fp, rhs: &Fp) {
+    ZZ_p_add_assign(&mut lhs.0, &rhs.0)
+}
+
 impl AddAssign<Fp> for Fp {
     fn add_assign(&mut self, rhs: Fp) {
-        self.0 = (*self + rhs).0;
+        ZZ_p_add_assign(&mut self.0, &rhs.0)
     }
+}
+
+pub fn ref_sub_assign(lhs :&mut Fp, rhs: &Fp) {
+    ZZ_p_sub_assign(&mut lhs.0, &rhs.0)
 }
 
 impl SubAssign<Fp> for Fp {
     fn sub_assign(&mut self, rhs: Fp) {
-        self.0 = (*self - rhs).0
+        ZZ_p_sub_assign(&mut self.0, &rhs.0)
     }
 }
 
@@ -150,7 +114,7 @@ impl Zero for Fp {
     }
 
     fn is_zero(&self) -> bool {
-        self.0.is_zero()
+        ZZ_p_eq(&self.0, &ZZ_p_zero())
     }
 }
 
@@ -168,51 +132,33 @@ impl_op_ex!(/|a: &Fp, b: &Fp| -> Fp {
 
 impl MulAssign<Fp> for Fp {
     fn mul_assign(&mut self, rhs: Fp) {
-        self.0 = (*self * rhs).0
+        ZZ_p_mul_assign(&mut self.0, &rhs.0)
     }
 }
 
 impl DivAssign<Fp> for Fp {
     fn div_assign(&mut self, rhs: Fp) {
-        self.0 = (*self / rhs).0
+        ZZ_p_div_assign(&mut self.0, &rhs.0)
     }
 }
 
-impl Pow<Fp> for Fp {
-    type Output = Fp;
-
-    fn pow(self, rhs: Fp) -> Self::Output {
-        if P == 1 {
-            return Fp(0);
-        }
-
-        let mut base = self.0;
-        let mut result = 1u128;
-        let mut exp = rhs.0;
-
-        base = base % P;
-        while exp > 0 {
-            if exp % 2 == 1 {
-                result = result * base % P;
-            }
-            exp = exp >> 1;
-            base = base * base % P
-        }
-        Fp(result)
+impl AbsDiffEq for Fp {
+    type Epsilon = Fp;
+    fn default_epsilon() -> Fp {
+        Fp::zero()
+    }
+    fn abs_diff_eq(&self, other: &Fp, _epsilon: Fp) -> bool {
+        self == other
     }
 }
 
-fn rand_u128<R: Rng>(rng: &mut R) -> u128 {
-    let x0: u128 = rng.gen::<u64>() as u128;
-    let x1: u128 = rng.gen::<u64>() as u128;
-    let x = x0 + (x1 << std::mem::size_of::<u128>() * 8 / 2);
-    x
-}
+impl RelativeEq for Fp {
+    fn default_max_relative() -> Fp {
+        Fp::zero()
+    }
 
-impl Rand for Fp {
-    fn rand<R: Rng>(rng: &mut R) -> Self {
-        let x = rand_u128(rng);
-        Fp(x % P)
+    fn relative_eq(&self, other: &Self, _epsilon: Fp, _max_relative: Fp) -> bool {
+        self == other
     }
 }
 
@@ -226,12 +172,53 @@ impl std::iter::Sum for Fp {
     }
 }
 
-pub fn to_le_bytes(x: &Fp) -> [u8; 16] {
-    x.0.to_le_bytes()
+pub fn init_or_restore_context() {
+    INIT_P.call_once(|| {
+        let p = ZZ_from_str(P);
+        ZZ_p_init(&p);
+        ZZ_p_save_context_global();
+    });
+    ZZ_p_restore_context_global()
+}
+
+unsafe impl Send for Fp {}
+impl Arbitrary for Fp {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        // we need to do this hack so that the modulus is initialized correctly
+        init_or_restore_context();
+
+        // TODO use i64 for now, write a proper Arbitrary later
+        Fp(ZZ_p_from_i64(i64::arbitrary(g)))
+    }
+}
+
+// TODO impl these as From/Into
+pub fn to_bytes(x: &Fp) -> Vec<u8> {
+    ZZ_p_to_bytes(&x.0)
+}
+
+pub fn from_bytes(buf: &Vec<u8>) -> Fp {
+    Fp(ZZ_p_from_bytes(buf))
+}
+
+impl Rand for Fp {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let mut buf: Vec<u8> = Vec::new();
+        buf.resize(ZZ_p_num_bytes() as usize, 0);
+        rng.fill_bytes(&mut buf);
+        from_bytes(&buf)
+        // Fp::one()
+    }
+}
+
+impl From<i64> for Fp {
+    fn from(x: i64) -> Self {
+        Fp(ZZ_p_from_i64(x))
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
     use alga::general::Field;
 
@@ -240,11 +227,10 @@ mod tests {
         fn is_field<T: Field>() {}
         is_field::<Fp>();
     }
-
+    
     #[quickcheck]
-    fn prop_diffie_hellman(g: Fp, a: Fp, b: Fp) -> bool {
-        let ga = g.pow(a);
-        let gb = g.pow(b);
-        gb.pow(a) == ga.pow(b)
+    fn prop_serialization(x: Fp) -> bool {
+        let buf = to_bytes(&x);
+        x == from_bytes(&buf)
     }
 }
