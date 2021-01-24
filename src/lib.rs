@@ -62,6 +62,9 @@ mod ffi {
         fn ZZ_p_eq(a: &UniquePtr<ZZ_p>, b: &UniquePtr<ZZ_p>) -> bool;
         fn ZZ_p_to_bytes(a: &UniquePtr<ZZ_p>) -> Vec<u8>;
         fn ZZ_p_from_bytes(a: &Vec<u8>) -> UniquePtr<ZZ_p>;
+
+        fn ZZ_p_save_context_global();
+        fn ZZ_p_restore_context_global();
     }
 }
 
@@ -70,14 +73,21 @@ mod zzp {
 
     use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
     use alga_derive::Alga;
+    use approx::{AbsDiffEq, RelativeEq};
     use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
     use num_traits::{One, Zero};
     use auto_ops::*;
+    use quickcheck::{Arbitrary, Gen};
     use std::fmt;
     use cxx;
+    use std::sync::Once;
+
+    static START: Once = Once::new();
+    static P: &str = "340282366920938463463374607431768211297";
 
     #[derive(Alga)]
     #[alga_traits(Field(Additive, Multiplicative))]
+    #[alga_quickcheck]
     pub struct Fp(cxx::UniquePtr<ZZ_p>); // we can only hold 64-bit values
 
     impl Clone for Fp {
@@ -193,33 +203,48 @@ mod zzp {
             ZZ_p_div_assign(&mut self.0, &rhs.0)
         }
     }
+
+    impl AbsDiffEq for Fp {
+        type Epsilon = Fp;
+        fn default_epsilon() -> Fp {
+            Fp::zero()
+        }
+        fn abs_diff_eq(&self, other: &Fp, _epsilon: Fp) -> bool {
+            self == other
+        }
+    }
+
+    impl RelativeEq for Fp {
+        fn default_max_relative() -> Fp {
+            Fp::zero()
+        }
+
+        fn relative_eq(&self, other: &Self, _epsilon: Fp, _max_relative: Fp) -> bool {
+            self == other
+        }
+    }
+
+    unsafe impl Send for Fp {}
+    impl Arbitrary for Fp {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            // we need to do this hack so that the modulus is initialized correctly
+            START.call_once(|| {
+                let p = ZZ_from_str(P);
+                ZZ_p_init(&p);
+                ZZ_p_save_context_global();
+            });
+            ZZ_p_restore_context_global();
+
+            // TODO use i64 for now
+            Fp(ZZ_p_from_i64(i64::arbitrary(g)))
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::ffi::*;
     use super::zzp::*;
     use alga::general::Field;
-
-    #[test]
-    fn zz_p() {
-        let p = ZZ_from_i64(91);
-        ZZ_p_init(&p);
-
-        let a = ZZ_p_from_i64(88);
-        let one = ZZ_p_from_i64(1);
-        let two = ZZ_p_from_i64(2);
-        let three = ZZ_p_from_i64(3);
-        assert!(ZZ_p_eq(&ZZ_p_add(&a, &a), &ZZ_p_mul(&a, &two)));
-        assert!(!ZZ_p_eq(&ZZ_p_add(&a, &a), &ZZ_p_mul(&a, &three)));
-
-        let mut mut_two = ZZ_p_from_i64(2);
-        ZZ_p_add_assign(&mut mut_two, &one);
-        assert!(ZZ_p_eq(&mut_two, &three));
-
-        let a_str = ZZ_p_to_bytes(&a);
-        assert!(ZZ_p_eq(&ZZ_p_from_bytes(&a_str), &a));
-    }
 
     #[test]
     fn test_trait_impl() {

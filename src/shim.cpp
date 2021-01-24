@@ -2,8 +2,6 @@
 #include <sstream>
 #include <algorithm>
 
-ZZ_pContext GLOBAL_ZZ_p_CTX;
-
 // ZZ
 
 std::unique_ptr<ZZ> ZZ_from_i64(long a) {
@@ -117,12 +115,4 @@ std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s) {
 	ZZ_p z;
 	conv(z, ZZFromBytes(reinterpret_cast<const unsigned char *>(s.data()), s.size()));
 	return std::make_unique<ZZ_p>(z);
-}
-
-void ZZ_p_save_context_global() {
-	GLOBAL_ZZ_p_CTX.save();
-}
-
-void ZZ_p_restore_context_global() {
-	GLOBAL_ZZ_p_CTX.restore();
 }
