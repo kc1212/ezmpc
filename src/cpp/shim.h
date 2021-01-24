@@ -16,12 +16,21 @@ std::unique_ptr<ZZ> ZZ_add(const std::unique_ptr<ZZ> &a, const std::unique_ptr<Z
 rust::String ZZ_to_string(const std::unique_ptr<ZZ> &z);
 
 void ZZ_p_init(const std::unique_ptr<ZZ> &z);
+std::unique_ptr<ZZ_p> ZZ_p_zero();
+std::unique_ptr<ZZ_p> ZZ_p_clone(const std::unique_ptr<ZZ_p> &z);
 std::unique_ptr<ZZ_p> ZZ_p_from_i64(long a);
 std::unique_ptr<ZZ_p> ZZ_p_from_str(rust::Str a);
+std::unique_ptr<ZZ_p> ZZ_p_neg(const std::unique_ptr<ZZ_p> &a);
+std::unique_ptr<ZZ_p> ZZ_p_inv(const std::unique_ptr<ZZ_p> &a);
 std::unique_ptr<ZZ_p> ZZ_p_add(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 void ZZ_p_add_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+std::unique_ptr<ZZ_p> ZZ_p_sub(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+void ZZ_p_sub_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 std::unique_ptr<ZZ_p> ZZ_p_mul(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+void ZZ_p_mul_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+std::unique_ptr<ZZ_p> ZZ_p_div(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
+void ZZ_p_div_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 rust::String ZZ_p_to_string(const std::unique_ptr<ZZ_p> &z);
 bool ZZ_p_eq(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
-std::unique_ptr<std::vector<unsigned char>> ZZ_p_to_bytes(const std::unique_ptr<ZZ_p> &a);
-std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const std::unique_ptr<std::vector<unsigned char>> &s);
+rust::Vec<unsigned char> ZZ_p_to_bytes(const std::unique_ptr<ZZ_p> &a);
+std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s);
