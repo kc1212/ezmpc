@@ -14,6 +14,7 @@ extern crate crossbeam_channel;
 extern crate log;
 extern crate rand;
 extern crate thiserror;
+extern crate rmp_serde;
 
 extern crate alga;
 extern crate alga_derive;
@@ -61,7 +62,7 @@ mod ffi {
         fn ZZ_p_to_string(z: &UniquePtr<ZZ_p>) -> String;
         fn ZZ_p_eq(a: &UniquePtr<ZZ_p>, b: &UniquePtr<ZZ_p>) -> bool;
         fn ZZ_p_to_bytes(a: &UniquePtr<ZZ_p>) -> Vec<u8>;
-        fn ZZ_p_from_bytes(a: &Vec<u8>) -> UniquePtr<ZZ_p>;
+        fn ZZ_p_from_bytes(a: &[u8]) -> UniquePtr<ZZ_p>;
 
         fn ZZ_p_save_context_global();
         fn ZZ_p_restore_context_global();

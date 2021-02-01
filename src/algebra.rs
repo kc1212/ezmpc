@@ -6,6 +6,9 @@ use cxx;
 use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
+use serde::de;
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use rmp_serde;
 use std::fmt;
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
 use std::sync::Once;
@@ -18,7 +21,7 @@ static P: &str = "340282366920938463463374607431768211297";
 #[derive(Alga)]
 #[alga_traits(Field(Additive, Multiplicative))]
 #[alga_quickcheck]
-pub struct Fp(cxx::UniquePtr<ZZ_p>); // we can only hold 64-bit values
+pub struct Fp(cxx::UniquePtr<ZZ_p>);
 
 impl Clone for Fp {
     fn clone(&self) -> Self {
@@ -194,22 +197,47 @@ impl Arbitrary for Fp {
     }
 }
 
-// TODO impl these as From/Into
-pub fn to_bytes(x: &Fp) -> Vec<u8> {
-    ZZ_p_to_bytes(&x.0)
+impl Serialize for Fp {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where 
+        S: Serializer
+    {
+        serializer.serialize_bytes(&ZZ_p_to_bytes(&self.0))
+    }
 }
 
-pub fn from_bytes(buf: &Vec<u8>) -> Fp {
-    Fp(ZZ_p_from_bytes(buf))
+struct FpVisitor;
+
+impl<'de> de::Visitor<'de> for FpVisitor {
+    type Value = Fp;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an field element")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where E: de::Error,
+    {
+        Ok(Fp(ZZ_p_from_bytes(v)))
+    }
+}
+
+impl<'de> Deserialize<'de> for Fp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        deserializer.deserialize_bytes(FpVisitor)
+    }
 }
 
 impl Rand for Fp {
     fn rand<R: Rng>(rng: &mut R) -> Self {
+        // TODO check if this is cryptographically secure
         let mut buf: Vec<u8> = Vec::new();
         buf.resize(ZZ_num_bytes(&ZZ_p_modulus()) as usize, 0);
         rng.fill_bytes(&mut buf);
-        from_bytes(&buf)
-        // Fp::one()
+        Fp(ZZ_p_from_bytes(&buf))
     }
 }
 
@@ -243,7 +271,8 @@ mod test {
     
     #[quickcheck]
     fn prop_serialization(x: Fp) -> bool {
-        let buf = to_bytes(&x);
-        x == from_bytes(&buf)
+        // consider using serde_test crate
+        let buf = rmp_serde::to_vec(&x).unwrap();
+        x == rmp_serde::from_read_ref(&buf).unwrap()
     }
 }

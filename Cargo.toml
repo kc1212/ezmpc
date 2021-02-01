@@ -20,6 +20,8 @@ quickcheck = "0.9"
 auto_ops = "0.1"
 sha3 = "0.9"
 cxx = "1.0"
+serde = "1.0"
+rmp-serde = "0.15"
 
 [dev-dependencies]
 itertools = "0.9.0"

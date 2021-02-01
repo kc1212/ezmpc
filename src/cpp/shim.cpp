@@ -113,7 +113,7 @@ rust::Vec<unsigned char> ZZ_p_to_bytes(const std::unique_ptr<ZZ_p> &a) {
 	return rust_vec;
 }
 
-std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s) {
+std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Slice<const unsigned char> s) {
 	ZZ_p z;
 	conv(z, ZZFromBytes(reinterpret_cast<const unsigned char *>(s.data()), s.size()));
 	return std::make_unique<ZZ_p>(z);

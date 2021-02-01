@@ -33,7 +33,7 @@ void ZZ_p_div_assign(std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 rust::String ZZ_p_to_string(const std::unique_ptr<ZZ_p> &z);
 bool ZZ_p_eq(const std::unique_ptr<ZZ_p> &a, const std::unique_ptr<ZZ_p> &b);
 rust::Vec<unsigned char> ZZ_p_to_bytes(const std::unique_ptr<ZZ_p> &a);
-std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Vec<unsigned char> &s);
+std::unique_ptr<ZZ_p> ZZ_p_from_bytes(const rust::Slice<const unsigned char> s);
 
 void ZZ_p_save_context_global();
 void ZZ_p_restore_context_global();
