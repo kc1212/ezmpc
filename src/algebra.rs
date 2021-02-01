@@ -8,7 +8,6 @@ use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
 use serde::de;
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
-use rmp_serde;
 use std::fmt;
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
 use std::sync::Once;
@@ -254,7 +253,9 @@ pub fn get_modulus_string() -> String {
 #[cfg(test)]
 mod test {
     use super::*;
+
     use alga::general::Field;
+    use quickcheck_macros::quickcheck;
     
     #[test]
     fn test_modulus_string() {

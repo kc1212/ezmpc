@@ -191,6 +191,7 @@ mod tests {
     use itertools::izip;
     use num_traits::{One, Zero};
     use rand::{Rng, SeedableRng, StdRng};
+    use quickcheck_macros::quickcheck;
 
     const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
 

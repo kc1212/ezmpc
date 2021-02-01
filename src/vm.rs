@@ -335,6 +335,7 @@ impl VM {
 mod tests {
     use super::*;
     use num_traits::Zero;
+    use quickcheck_macros::quickcheck;
 
     fn unauth_vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<Fp>) -> Reg {
         let vv: Vec<_> = vsecret
