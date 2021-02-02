@@ -10,7 +10,7 @@ use crate::message;
 use crate::message::{PartyID, PartyMsg, RandShareMsg, SyncMsg, SyncReplyMsg, TripleMsg};
 use crate::vm;
 
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{debug, error};
 use num_traits::Zero;
 use rand::{Rng, SeedableRng, StdRng};

@@ -5,7 +5,7 @@ use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam::channel::{bounded, select, Receiver, Sender};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::default::Default;

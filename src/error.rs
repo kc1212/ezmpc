@@ -4,7 +4,8 @@ use crate::algebra::Fp;
 use crate::message;
 use crate::vm;
 
-use crossbeam_channel;
+use crossbeam::channel;
+use toml;
 use std::fmt;
 use std::time::Duration;
 use thiserror::Error;
@@ -37,27 +38,37 @@ pub enum MPCError {
     #[error(transparent)]
     MACCheckError(#[from] MACCheckError),
     #[error(transparent)]
-    RecvError(#[from] crossbeam_channel::RecvError),
+    RecvError(#[from] channel::RecvError),
     #[error(transparent)]
-    RecvTimeoutError(#[from] crossbeam_channel::RecvTimeoutError),
+    RecvTimeoutError(#[from] channel::RecvTimeoutError),
     #[error(transparent)]
-    SendErrorSyncMsg(#[from] crossbeam_channel::SendError<message::SyncMsg>),
+    SendErrorSyncMsg(#[from] channel::SendError<message::SyncMsg>),
     #[error(transparent)]
-    SendErrorSyncReplyMsg(#[from] crossbeam_channel::SendError<message::SyncReplyMsg>),
+    SendErrorSyncReplyMsg(#[from] channel::SendError<message::SyncReplyMsg>),
     #[error(transparent)]
-    SendErrorNodeMsg(#[from] crossbeam_channel::SendError<message::PartyMsg>),
+    SendErrorNodeMsg(#[from] channel::SendError<message::PartyMsg>),
     #[error(transparent)]
-    SendErrorInputRandMsg(#[from] crossbeam_channel::SendError<message::RandShareMsg>),
+    SendErrorInputRandMsg(#[from] channel::SendError<message::RandShareMsg>),
     #[error(transparent)]
-    SendErrorAction(#[from] crossbeam_channel::SendError<vm::Action>),
+    SendErrorAction(#[from] channel::SendError<vm::Action>),
     #[error(transparent)]
-    SendErrorInstruction(#[from] crossbeam_channel::SendError<vm::Instruction>),
+    SendErrorInstruction(#[from] channel::SendError<vm::Instruction>),
     #[error(transparent)]
-    SendErrorFp(#[from] crossbeam_channel::SendError<Fp>),
+    SendErrorFp(#[from] channel::SendError<Fp>),
     #[error(transparent)]
-    SendErrorOutputResult(#[from] crossbeam_channel::SendError<Result<(), MACCheckError>>),
+    SendErrorOutputResult(#[from] channel::SendError<Result<(), MACCheckError>>),
     #[error(transparent)]
-    TrySendErrorTriple(#[from] crossbeam_channel::TrySendError<message::TripleMsg>),
+    TrySendErrorTriple(#[from] channel::TrySendError<message::TripleMsg>),
     #[error(transparent)]
-    TrySendErrorRandShareMsg(#[from] crossbeam_channel::TrySendError<message::RandShareMsg>),
+    TrySendErrorRandShareMsg(#[from] channel::TrySendError<message::RandShareMsg>),
+}
+
+#[derive(Error, Debug)]
+pub enum ApplicationError {
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error(transparent)]
+    TomlError(#[from] toml::de::Error),
+    #[error(transparent)]
+    MPCError(#[from] MPCError),
 }

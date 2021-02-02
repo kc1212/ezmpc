@@ -1,4 +1,4 @@
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender};
 use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng, StdRng};
 use std::thread::JoinHandle;

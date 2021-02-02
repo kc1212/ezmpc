@@ -5,7 +5,7 @@ use crate::error::{MPCError, TIMEOUT};
 use crate::message;
 use crate::message::{SyncMsg, SyncReplyMsg};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
+use crossbeam::channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::thread;
 
@@ -59,7 +59,7 @@ impl Synchronizer {
 mod tests {
     use super::*;
     use crate::message::{SyncMsg, SyncReplyMsg};
-    use crossbeam_channel::bounded;
+    use crossbeam::channel::bounded;
 
     const TEST_CAP: usize = 5;
 

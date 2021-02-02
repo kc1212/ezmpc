@@ -4,7 +4,7 @@ use crate::algebra::Fp;
 use crate::crypto;
 use crate::crypto::commit;
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
+use crossbeam::channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
 use std::fmt::Debug;
 use std::time::Duration;
@@ -29,6 +29,10 @@ pub(crate) fn receive<T: Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duratio
     }
     debug!("All received {:?}", out);
     Ok(out)
+}
+
+pub enum Msg {
+    
 }
 
 /// This is the message sent, usually using broadcast,
