@@ -10,6 +10,13 @@ const SHIM_CAP: usize = 1000;
 const TYPE_BYTES: usize = 8;
 const LENGTH_BYTES: usize = 8;
 
+fn try_shutdown(stream: &TcpStream) {
+    match stream.shutdown(Shutdown::Both) {
+        Ok(()) => {},
+        Err(e) => info!("[{:?}] attempted to shutdown stream but failed: {:?}", stream.local_addr(), e),
+    }
+}
+
 /// Wrap a TcpStream into channels.
 pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8], Vec<u8>)>, JoinHandle<()>) {
     let (reader_s, reader_r) = bounded(SHIM_CAP);
@@ -22,13 +29,13 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
         let read_hdl = thread::spawn(move || {
             loop {
                 let mut f = || -> Result<(), std::io::Error> {
-                    let mut type_buf: [u8; TYPE_BYTES] = [0; TYPE_BYTES];
-                    let mut length_buf: [u8; LENGTH_BYTES] = [0; LENGTH_BYTES];
+                    let mut type_buf = [0u8; TYPE_BYTES];
+                    let mut length_buf = [0u8; LENGTH_BYTES];
                     reader.read_exact(&mut type_buf)?;
                     reader.read_exact(&mut length_buf)?;
 
                     let n = usize::from_le_bytes(length_buf);
-                    let mut value_buf = vec![0; n];
+                    let mut value_buf = vec![0u8; n];
                     reader.read_exact(&mut value_buf)?;
 
                     match reader_s.send((type_buf, value_buf)) {
@@ -43,11 +50,8 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
                 match f() {
                     Ok(()) => {}
                     Err(e) => {
-                        info!("[-] read failed but probably not an issue: {:?}", e);
-                        match reader.shutdown(Shutdown::Both) {
-                            Ok(()) => {},
-                            Err(e) => info!("[{:?}] attempted to close stream but failed: {:?}", reader.local_addr(), e),
-                        }
+                        info!("[{:?}] read failed but probably not an issue: {:?}", reader.local_addr(), e);
+                        try_shutdown(&reader);
                         break;
                     }
                 }
@@ -63,20 +67,21 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
                         // is there another way to close the stream?
                         info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
                         writer.shutdown(Shutdown::Both).expect("shutdown call failed");
+                        info!("[{:?}] closed stream", writer.local_addr());
                         break;
                     }
                     match writer.write_all(&v) {
                         Ok(()) => {},
                         Err(e) => {
                             error!("[{:?}] write error: {:?}", writer.local_addr(), e);
-                            writer.shutdown(Shutdown::Both).expect("shutdown call failed");
+                            try_shutdown(&writer);
                             break;
                         }
                     }
                 },
             }
         }
-        read_hdl.join().unwrap()
+        read_hdl.join().expect("reader thread panicked")
     });
 
     (writer_s, reader_r, hdl)
@@ -86,6 +91,7 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
 mod test {
     use super::*;
     use std::net::TcpListener;
+    use test_env_log::test;
 
     #[test]
     fn test_tcpstream_wrapper() {
