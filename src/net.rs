@@ -105,15 +105,16 @@ where
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Node {
+pub struct OnlineNode {
     id: PartyID,
     local_addr: SocketAddr,
     alpha_share: Fp,
     sync_addr: SocketAddr,
+    preprocessing_addr: SocketAddr,
     peers: Vec<SocketAddr>,
 }
 
-impl Node {
+impl OnlineNode {
     fn run(&self) -> Result<(), ApplicationError> {
         // let listener = TcpListener::bind(self.local_addr)?;
         // let mut handlers = vec![];

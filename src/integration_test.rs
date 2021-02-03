@@ -3,8 +3,9 @@ use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng, StdRng};
 use std::thread::JoinHandle;
 use test_env_log::test;
+use log::debug;
 
-use crate::algebra::{Fp, init_or_restore_context};
+use crate::algebra::{init_or_restore_context, Fp};
 use crate::crypto::*;
 use crate::message::*;
 use crate::party::Party;
@@ -57,8 +58,7 @@ fn get_col<T: Clone>(matrix: &Vec<Vec<T>>, col: usize) -> Vec<T> {
 fn integration_test_clear_add() {
     init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
-    let (_triple_sender, triple_receiver) = bounded(TEST_CAP);
-    let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
+    let (_preproc_sender, preproc_receiver) = bounded(TEST_CAP);
     let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
 
     let two = Fp::one() + Fp::one();
@@ -71,8 +71,7 @@ fn integration_test_clear_add() {
         prog,
         sync_chans_for_party.0[0].clone(),
         sync_chans_for_party.1[0].clone(),
-        triple_receiver,
-        rand_receiver,
+        preproc_receiver,
         vec![],
         vec![],
         TEST_SEED,
@@ -88,8 +87,7 @@ fn integration_test_clear_add() {
 fn integration_test_triple() {
     init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
-    let (triple_sender, triple_receiver) = bounded(TEST_CAP);
-    let (_rand_sender, rand_receiver) = bounded(TEST_CAP);
+    let (preproc_sender, preproc_receiver) = bounded(TEST_CAP);
     let prog = vec![
         vm::Instruction::Triple(0, 1, 2),
         vm::Instruction::SOutput(0),
@@ -97,7 +95,7 @@ fn integration_test_triple() {
         vm::Instruction::SOutput(2),
         vm::Instruction::Stop,
     ];
-
+    
     let zero = AuthShare {
         share: Fp::zero(),
         mac: Fp::zero(),
@@ -107,7 +105,10 @@ fn integration_test_triple() {
         mac: Fp::one(),
     };
     let two = &one + &one;
-    triple_sender.send(TripleMsg::new(zero.clone(), one.clone(), two.clone())).unwrap();
+
+    preproc_sender
+        .send(PreprocMsg::new_triple(zero.clone(), one.clone(), two.clone()))
+        .unwrap();
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
@@ -118,8 +119,7 @@ fn integration_test_triple() {
         prog,
         sync_chans_for_party.0[0].clone(),
         sync_chans_for_party.1[0].clone(),
-        triple_receiver,
-        rand_receiver,
+        preproc_receiver,
         vec![],
         vec![],
         TEST_SEED,
@@ -147,20 +147,14 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     let alpha: Fp = rng.gen();
     let alpha_shares = unauth_share(&alpha, n, rng);
 
-    // check for the number of triples in prog and generate enough triples for it
-    let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
-    let triple_chans = create_chans::<TripleMsg>(n, triple_count);
-    for _ in 0..triple_count {
-        let (triple_a, triple_b, triple_c) = auth_triple(n, &alpha, rng);
-        for (i, (s, _)) in triple_chans.iter().enumerate() {
-            s.send(TripleMsg::new(triple_a[i].to_owned(), triple_b[i].to_owned(), triple_c[i].to_owned())).unwrap();
-        }
-    }
-
-    // check for the number of input instructions and generate random shares
+    // check how many triples and random shares we need and create a preprocessing channel for it
     // TODO this is more rand shares than we need, since we're giving every party max_rand_count number of shares
     let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
-    let rand_chans = create_chans::<RandShareMsg>(n, max_rand_count * n);
+    let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
+    let preproc_chans = create_chans::<PreprocMsg>(n, triple_count + max_rand_count * n);
+
+    // write the random shares
+    debug!("sending {} rand shares", max_rand_count * n);
     for clear_id in 0..n {
         for _ in 0..max_rand_count {
             let r: Fp = rng.gen();
@@ -168,15 +162,28 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
             let rand_shares: Vec<_> = auth_shares
                 .iter()
                 .enumerate()
-                .map(|(i, share)| RandShareMsg {
-                    share: share.clone(),
-                    clear: if clear_id == i { Some(r.clone()) } else { None },
-                    party_id: clear_id,
-                })
+                .map(|(i, share)| PreprocMsg::new_rand_share(
+                    share.clone(), 
+                    if clear_id == i { Some(r.clone()) } else { None }, 
+                    clear_id))
                 .collect();
-            for (i, (s, _)) in rand_chans.iter().enumerate() {
+            for (i, (s, _)) in preproc_chans.iter().enumerate() {
                 s.send(rand_shares[i].clone()).unwrap();
             }
+        }
+    }
+
+    // write the triples
+    debug!("sending {} triples", triple_count);
+    for _ in 0..triple_count {
+        let (triple_a, triple_b, triple_c) = auth_triple(n, &alpha, rng);
+        for (i, (s, _)) in preproc_chans.iter().enumerate() {
+            s.send(PreprocMsg::new_triple(
+                triple_a[i].to_owned(),
+                triple_b[i].to_owned(),
+                triple_c[i].to_owned(),
+            ))
+            .unwrap();
         }
     }
 
@@ -191,8 +198,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
                 prog.clone(),
                 sync_chans_for_party.0[i].clone(),
                 sync_chans_for_party.1[i].clone(),
-                triple_chans[i].1.clone(),
-                rand_chans[i].1.clone(),
+                preproc_chans[i].1.clone(),
                 get_row(&party_chans, i).into_iter().map(|(s, _)| s).collect(),
                 get_col(&party_chans, i).into_iter().map(|(_, r)| r).collect(),
                 TEST_SEED,

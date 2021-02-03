@@ -7,7 +7,7 @@ use crate::crypto::commit;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message;
-use crate::message::{PartyID, PartyMsg, RandShareMsg, SyncMsg, SyncReplyMsg, TripleMsg};
+use crate::message::{PartyID, PartyMsg, SyncMsg, SyncReplyMsg, PreprocMsg};
 use crate::vm;
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
@@ -24,8 +24,7 @@ pub struct Party {
     com_scheme: commit::Scheme,
     s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
-    triple_chan: Receiver<TripleMsg>,
-    rand_chan: Receiver<RandShareMsg>,
+    preprocessing_chan: Receiver<PreprocMsg>,
     s_party_chans: Vec<Sender<PartyMsg>>,
     r_party_chans: Vec<Receiver<PartyMsg>>,
 }
@@ -41,26 +40,24 @@ impl Party {
         instructions: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
-        triple_chan: Receiver<TripleMsg>,
-        rand_chan: Receiver<RandShareMsg>,
+        preprocessing_chan: Receiver<PreprocMsg>,
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
         rng_seed: [usize; 4],
     ) -> thread::JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
             init_or_restore_context();
-            let s = Party {
+            let p = Party {
                 id,
                 alpha_share,
                 com_scheme: commit::Scheme {},
                 s_sync_chan,
                 r_sync_chan,
-                triple_chan,
-                rand_chan,
+                preprocessing_chan,
                 s_party_chans: s_party_chan,
                 r_party_chans: r_party_chan,
             };
-            s.listen(reg, instructions, rng_seed)
+            p.listen(reg, instructions, rng_seed)
         })
     }
 
@@ -85,25 +82,45 @@ impl Party {
         );
         let mut pc = 0;
 
-        // wait for start
+        // wait for start, collect the preprocessing message while we wait
         loop {
-            let msg = self.r_sync_chan.recv()?;
-            if msg == SyncMsg::Start {
-                debug!("[{}] Starting", self.id);
-                break;
-            } else {
-                debug!("[{}] Received {:?} while waiting to start", self.id, msg);
+            select! {
+                recv(self.r_sync_chan) -> msg_res => {
+                    let msg = msg_res?;
+                    if msg == SyncMsg::Start {
+                        debug!("[{}] Starting", self.id);
+                        break;
+                    } else {
+                        debug!("[{}] Received {:?} while waiting to start", self.id, msg);
+                    }
+                }
+                recv(self.preprocessing_chan) -> x => {
+                    debug!("[{}] got preproc msg {:?}", self.id, x);
+                    match x? {
+                        PreprocMsg::Triple(msg) => {
+                            s_inner_triple_chan.try_send(msg)?
+                        }
+                        PreprocMsg::RandShare(msg) => {
+                            s_inner_rand_chan.try_send(msg)?
+                        }
+                    }
+                }
             }
         }
 
         // process instructions
         loop {
             select! {
-                recv(self.triple_chan) -> x => {
-                    s_inner_triple_chan.try_send(x?)?
-                }
-                recv(self.rand_chan) -> x => {
-                    s_inner_rand_chan.try_send(x?)?
+                recv(self.preprocessing_chan) -> x => {
+                    debug!("[{}] got preproc msg {:?}", self.id, x);
+                    match x? {
+                        PreprocMsg::Triple(msg) => {
+                            s_inner_triple_chan.try_send(msg)?
+                        }
+                        PreprocMsg::RandShare(msg) => {
+                            s_inner_rand_chan.try_send(msg)?
+                        }
+                    }
                 }
                 recv(self.r_sync_chan) -> v => {
                     let msg: SyncMsg = v?;
@@ -118,6 +135,10 @@ impl Party {
 
                             debug!("[{}] Sending instruction {:?} to VM", self.id, instruction);
                             s_inst_chan.send(instruction.clone())?;
+                            // NOTE there's a bug here because this function blocks,
+                            // which means we cannot forward preprocessing data to the VM.
+                            // then if the VM asks for more triples/rand shares when there's
+                            // nothing in the channel buffer then the program crashes
                             self.handle_vm_actions(&r_action_chan, rng)?;
 
                             if instruction == vm::Instruction::Stop {
@@ -231,16 +252,14 @@ mod tests {
     fn make_dummy_party(alpha_share: Fp, s_party_chans: Vec<Sender<PartyMsg>>, r_party_chans: Vec<Receiver<PartyMsg>>) -> Party {
         let (dummy_s_sync_chan, _) = bounded(TEST_CAP);
         let (_, dummy_r_sync_chan) = bounded(TEST_CAP);
-        let (_, dummy_triple_chan) = bounded(TEST_CAP);
-        let (_, dummy_rand_chan) = bounded(TEST_CAP);
+        let (_, dummy_preprocessing_chan) = bounded(TEST_CAP);
         Party {
             id: 0,
             alpha_share,
             com_scheme: commit::Scheme {},
             s_sync_chan: dummy_s_sync_chan,
             r_sync_chan: dummy_r_sync_chan,
-            triple_chan: dummy_triple_chan,
-            rand_chan: dummy_rand_chan,
+            preprocessing_chan: dummy_preprocessing_chan,
             s_party_chans,
             r_party_chans,
         }

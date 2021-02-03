@@ -31,9 +31,7 @@ pub(crate) fn receive<T: Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duratio
     Ok(out)
 }
 
-pub enum Msg {
-    
-}
+pub enum Msg {}
 
 /// This is the message sent, usually using broadcast,
 /// by the synchronizer to the individual parties.
@@ -85,6 +83,7 @@ impl PartyMsg {
 
 /// This is a share of a Beaver triple where `a * b = c`,
 /// used for computing multiplication.
+#[derive(Clone, Debug)]
 pub struct TripleMsg {
     pub a: crypto::AuthShare,
     pub b: crypto::AuthShare,
@@ -106,4 +105,20 @@ pub struct RandShareMsg {
     pub share: crypto::AuthShare,
     pub clear: Option<Fp>,
     pub party_id: PartyID,
+}
+
+#[derive(Clone, Debug)]
+pub enum PreprocMsg {
+    Triple(TripleMsg),
+    RandShare(RandShareMsg),
+}
+
+impl PreprocMsg {
+    pub fn new_triple(a: crypto::AuthShare, b: crypto::AuthShare, c: crypto::AuthShare) -> PreprocMsg {
+        PreprocMsg::Triple(TripleMsg::new(a, b, c))
+    }
+
+    pub fn new_rand_share(share: crypto::AuthShare, clear: Option<Fp>, party_id: PartyID) -> PreprocMsg {
+        PreprocMsg::RandShare(RandShareMsg { share, clear, party_id })
+    }
 }

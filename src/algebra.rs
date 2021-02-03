@@ -7,7 +7,7 @@ use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::{Rand, Rng};
 use serde::de;
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::{AddAssign, DivAssign, MulAssign, Neg, SubAssign};
 use std::sync::Once;
@@ -80,11 +80,9 @@ impl_op_ex!(+|a: &Fp, b:  &Fp| -> Fp {
     Fp(ZZ_p_add(&a.0, &b.0)) // AbstractMagma::<Additive>::operate(a, b)
 });
 
-impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { 
-    Fp(ZZ_p_sub(&a.0, &b.0))
-});
+impl_op_ex!(-|a: &Fp, b: &Fp| -> Fp { Fp(ZZ_p_sub(&a.0, &b.0)) });
 
-pub fn ref_add_assign(lhs :&mut Fp, rhs: &Fp) {
+pub fn ref_add_assign(lhs: &mut Fp, rhs: &Fp) {
     ZZ_p_add_assign(&mut lhs.0, &rhs.0)
 }
 
@@ -94,7 +92,7 @@ impl AddAssign<Fp> for Fp {
     }
 }
 
-pub fn ref_sub_assign(lhs :&mut Fp, rhs: &Fp) {
+pub fn ref_sub_assign(lhs: &mut Fp, rhs: &Fp) {
     ZZ_p_sub_assign(&mut lhs.0, &rhs.0)
 }
 
@@ -198,8 +196,8 @@ impl Arbitrary for Fp {
 
 impl Serialize for Fp {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where 
-        S: Serializer
+    where
+        S: Serializer,
     {
         serializer.serialize_bytes(&ZZ_p_to_bytes(&self.0))
     }
@@ -215,7 +213,8 @@ impl<'de> de::Visitor<'de> for FpVisitor {
     }
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-        where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(Fp(ZZ_p_from_bytes(v)))
     }
@@ -224,7 +223,7 @@ impl<'de> de::Visitor<'de> for FpVisitor {
 impl<'de> Deserialize<'de> for Fp {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         deserializer.deserialize_bytes(FpVisitor)
     }
@@ -256,7 +255,7 @@ mod test {
 
     use alga::general::Field;
     use quickcheck_macros::quickcheck;
-    
+
     #[test]
     fn test_modulus_string() {
         init_or_restore_context();
@@ -269,7 +268,7 @@ mod test {
         fn is_field<T: Field>() {}
         is_field::<Fp>();
     }
-    
+
     #[quickcheck]
     fn prop_serialization(x: Fp) -> bool {
         // consider using serde_test crate
