@@ -184,6 +184,7 @@ pub fn init_or_restore_context() {
 }
 
 unsafe impl Send for Fp {}
+unsafe impl Sync for Fp {}
 impl Arbitrary for Fp {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         // we need to do this hack so that the modulus is initialized correctly

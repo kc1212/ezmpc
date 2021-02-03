@@ -6,6 +6,7 @@ use crate::crypto::commit;
 
 use crossbeam::channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
+use serde::{Serialize, Deserialize};
 use std::fmt::Debug;
 use std::time::Duration;
 
@@ -31,11 +32,9 @@ pub(crate) fn receive<T: Clone + Debug>(r_chans: &Vec<Receiver<T>>, dur: Duratio
     Ok(out)
 }
 
-pub enum Msg {}
-
 /// This is the message sent, usually using broadcast,
 /// by the synchronizer to the individual parties.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
 pub enum SyncMsg {
     Start,
     Next,
@@ -43,7 +42,7 @@ pub enum SyncMsg {
 }
 
 /// This is the message send from the parties to the synchronizer.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
 pub enum SyncReplyMsg {
     Ok,
     Done,
@@ -51,7 +50,7 @@ pub enum SyncReplyMsg {
 }
 
 /// This is the message sent between the parties themselves.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum PartyMsg {
     Elem(Fp),
     Com(commit::Commitment),
@@ -83,7 +82,7 @@ impl PartyMsg {
 
 /// This is a share of a Beaver triple where `a * b = c`,
 /// used for computing multiplication.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TripleMsg {
     pub a: crypto::AuthShare,
     pub b: crypto::AuthShare,
@@ -100,14 +99,14 @@ impl TripleMsg {
 
 /// This is a random sharing where only one party knows the random share,
 /// used for inputting a secret value into the MPC.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RandShareMsg {
     pub share: crypto::AuthShare,
     pub clear: Option<Fp>,
     pub party_id: PartyID,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum PreprocMsg {
     Triple(TripleMsg),
     RandShare(RandShareMsg),

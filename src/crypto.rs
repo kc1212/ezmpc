@@ -3,9 +3,10 @@ use crate::algebra::{Fp, ref_add_assign};
 use auto_ops::*;
 use num_traits::Zero;
 use rand::Rng;
+use serde::{Serialize, Deserialize};
 
 /// This structure represents an authenticated share.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AuthShare {
     pub share: Fp,
     pub mac: Fp,
@@ -116,9 +117,10 @@ pub mod commit {
     use sha3;
     use sha3::Digest;
     use std::fmt;
+    use serde::{Serialize, Deserialize};
 
     /// This is the structure that represents a commitment.
-    #[derive(Clone)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct Commitment {
         c: [u8; 32],
     }
@@ -132,7 +134,7 @@ pub mod commit {
     }
 
     /// This is the structure that represents an opening of a commitment.
-    #[derive(Clone)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct Opening {
         v: Fp,
         r: [u8; 32],

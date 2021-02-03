@@ -37,7 +37,7 @@ impl Party {
         id: PartyID,
         alpha_share: Fp,
         reg: vm::Reg,
-        instructions: Vec<vm::Instruction>,
+        prog: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
         preproc_chan: Receiver<PreprocMsg>,
@@ -57,7 +57,7 @@ impl Party {
                 s_party_chans: s_party_chan,
                 r_party_chans: r_party_chan,
             };
-            p.listen(reg, instructions, rng_seed)
+            p.listen(reg, prog, rng_seed)
         })
     }
 
