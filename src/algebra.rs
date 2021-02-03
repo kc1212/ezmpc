@@ -273,7 +273,7 @@ mod test {
     #[quickcheck]
     fn prop_serialization(x: Fp) -> bool {
         // consider using serde_test crate
-        let buf = rmp_serde::to_vec(&x).unwrap();
-        x == rmp_serde::from_read_ref(&buf).unwrap()
+        let buf = bincode::serialize(&x).unwrap();
+        x == bincode::deserialize(&buf).unwrap()
     }
 }

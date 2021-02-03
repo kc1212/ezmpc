@@ -112,7 +112,7 @@ pub mod commit {
     use crate::algebra::Fp;
 
     use rand::Rng;
-    use rmp_serde;
+    use bincode;
     use sha3;
     use sha3::Digest;
     use std::fmt;
@@ -163,7 +163,7 @@ pub mod commit {
         /// Generates a commitment for `secret` and an opening.
         pub fn commit(&self, secret: Fp, rng: &mut impl Rng) -> (Commitment, Opening) {
             let r: [u8; 32] = rng.gen();
-            let v = rmp_serde::to_vec(&secret).unwrap();
+            let v = bincode::serialize(&secret).expect("serialization failed");
             let mut hasher = sha3::Sha3_256::new();
             hasher.update(&r);
             hasher.update(&v);
@@ -174,7 +174,7 @@ pub mod commit {
         /// Use the commitment `com` and the opening `opening` to verify whether the committer honestly opened its value.
         pub fn verify(&self, opening: &Opening, com: &Commitment) -> bool {
             let mut hasher = sha3::Sha3_256::new();
-            let v = rmp_serde::to_vec(&opening.v).unwrap();
+            let v = bincode::serialize(&opening.v).expect("serialization failed");
             hasher.update(&opening.r);
             hasher.update(&v);
             let c_prime: [u8; 32] = hasher.finalize().into();

@@ -1,59 +1,66 @@
+use bincode;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
-use log::{info, error};
-use std::io;
+use log::{error, info};
+use serde::{Deserialize, de::DeserializeOwned, Serialize};
+use std::{io, unimplemented};
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::thread::JoinHandle;
 
+use crate::algebra::Fp;
+use crate::error::ApplicationError;
+use crate::message::PartyID;
+
 const SHIM_CAP: usize = 1000;
-const TYPE_BYTES: usize = 8;
 const LENGTH_BYTES: usize = 8;
 
 fn try_shutdown(stream: &TcpStream) {
     match stream.shutdown(Shutdown::Both) {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => info!("[{:?}] attempted to shutdown stream but failed: {:?}", stream.local_addr(), e),
     }
 }
 
 /// Wrap a TcpStream into channels.
-pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8], Vec<u8>)>, JoinHandle<()>) {
+pub fn wrap_tcpstream< S, R, G>(stream: TcpStream, do_close: G) -> (Sender<S>, Receiver<R>, JoinHandle<()>)
+where
+    S: 'static + Sync + Send + Clone + Serialize,
+    R: 'static + Sync + Send + Clone + DeserializeOwned,
+    G: 'static + Sync + Send + Clone + Fn(&S) -> bool,
+{
     let (reader_s, reader_r) = bounded(SHIM_CAP);
-    let (writer_s, writer_r): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = bounded(SHIM_CAP);
+    let (writer_s, writer_r) = bounded(SHIM_CAP);
     let mut reader = stream.try_clone().unwrap();
     let mut writer = stream.try_clone().unwrap();
 
     let hdl = thread::spawn(move || {
         // read data from a stream and then forward it to a channel
-        let read_hdl = thread::spawn(move || {
-            loop {
-                let mut f = || -> Result<(), std::io::Error> {
-                    let mut type_buf = [0u8; TYPE_BYTES];
-                    let mut length_buf = [0u8; LENGTH_BYTES];
-                    reader.read_exact(&mut type_buf)?;
-                    reader.read_exact(&mut length_buf)?;
+        let read_hdl = thread::spawn(move || loop {
+            let mut f = || -> Result<(), std::io::Error> {
+                let mut length_buf = [0u8; LENGTH_BYTES];
+                reader.read_exact(&mut length_buf)?;
 
-                    let n = usize::from_le_bytes(length_buf);
-                    let mut value_buf = vec![0u8; n];
-                    reader.read_exact(&mut value_buf)?;
+                let n = usize::from_le_bytes(length_buf);
+                let mut value_buf = vec![0u8; n];
+                reader.read_exact(&mut value_buf)?;
 
-                    match reader_s.send((type_buf, value_buf)) {
-                        Ok(()) => Ok(()),
-                        Err(e) => {
-                            let custom_error = io::Error::new(io::ErrorKind::Other, e);
-                            Err(custom_error)
-                        }
-                    }
-                };
-
-                match f() {
-                    Ok(()) => {}
+                let msg: R = bincode::deserialize(&value_buf).expect("deserialization failed");
+                match reader_s.send(msg) {
+                    Ok(()) => Ok(()),
                     Err(e) => {
-                        info!("[{:?}] read failed but probably not an issue: {:?}", reader.local_addr(), e);
-                        try_shutdown(&reader);
-                        break;
+                        let custom_error = io::Error::new(io::ErrorKind::Other, e);
+                        Err(custom_error)
                     }
+                }
+            };
+
+            match f() {
+                Ok(()) => {}
+                Err(e) => {
+                    info!("[{:?}] read failed but probably not an issue: {:?}", reader.local_addr(), e);
+                    try_shutdown(&reader);
+                    break;
                 }
             }
         });
@@ -63,14 +70,20 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
             select! {
                 recv(writer_r) -> buf => {
                     let v = buf.unwrap();
-                    if v.is_empty() {
+                    if do_close(&v) {
                         // is there another way to close the stream?
                         info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
                         writer.shutdown(Shutdown::Both).expect("shutdown call failed");
                         info!("[{:?}] closed stream", writer.local_addr());
                         break;
                     }
-                    match writer.write_all(&v) {
+                    // construct a header with the length and concat it with the body
+                    let mut data = bincode::serialized_size(&v)
+                        .expect("failed to find serialized size")
+                        .to_le_bytes()
+                        .to_vec();
+                    data.extend(bincode::serialize(&v).expect("serialization failed"));
+                    match writer.write_all(&data) {
                         Ok(()) => {},
                         Err(e) => {
                             error!("[{:?}] write error: {:?}", writer.local_addr(), e);
@@ -87,48 +100,105 @@ pub fn wrap_tcpstream(stream: TcpStream) -> (Sender<Vec<u8>>, Receiver<([u8; 8],
     (writer_s, reader_r, hdl)
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Node {
+    id: PartyID,
+    local_addr: SocketAddr,
+    alpha_share: Fp,
+    sync_addr: SocketAddr,
+    peers: Vec<SocketAddr>,
+}
+
+impl Node {
+    fn run(&self) -> Result<(), ApplicationError> {
+        // let listener = TcpListener::bind(self.local_addr)?;
+        // let mut handlers = vec![];
+        // for stream_result in listener.incoming() {
+        //     let stream = stream_result?;
+
+        //     // check if such an IP already exists, otherwise drop the connections
+        //     match stream.peer_addr() {
+        //         Ok(addr) => {
+        //             if self.peers.contains(&addr) {
+        //                 // TODO drop connection
+        //                 continue;
+        //             }
+        //         }
+        //         Err(e) => {
+        //             // TODO report error
+        //             continue;
+        //         }
+        //     };
+
+        //     // handle the stream
+        //     let (s, r, h) = wrap_tcpstream(stream);
+        //     handlers.push(h);
+        // }
+        // Ok(())
+        unimplemented!()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::net::TcpListener;
     use test_env_log::test;
+    
+    #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+    struct Msg {
+        a: usize,
+        close: bool,
+    }
+    
+    fn start_close(msg: &Msg) -> bool {
+        msg.close
+    }
 
     #[test]
     fn test_tcpstream_wrapper() {
-        // start server in a thread
         const ADDR: &str = "127.0.0.1:36794";
-        const TYPE: usize = 0;
-        const MSG: [u8; 4] = [1,2,3,4];
-        const MSG2: [u8; 1] = [9];
+        const MSG1: Msg = Msg { a: 1, close: false };
+        const MSG2: Msg = Msg { a: 2, close: false };
+        const MSG_CLOSE: Msg = Msg { a: 0, close: true };
+
+        // start server in a thread
         let (s, r) = bounded(1);
-        let server_hdl = thread::spawn(move || {
+        let server_hdl: JoinHandle<Msg> = thread::spawn(move || {
             let listener = TcpListener::bind(ADDR).unwrap();
             s.send(()).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
 
             // write a message
-            let mut buf = [TYPE.to_le_bytes(), MSG.len().to_le_bytes()].concat();
-            buf.extend_from_slice(&MSG);
-            stream.write_all(&buf).unwrap();
+            let mut msg1_buf = bincode::serialized_size(&MSG1).unwrap()
+                .to_le_bytes()
+                .to_vec();
+            msg1_buf.extend(bincode::serialize(&MSG1).unwrap());
+            stream.write_all(&msg1_buf).unwrap();
 
             // read a message
-            let mut read_buf = [0u8; MSG2.len()];
+            let mut read_len_buf = [0u8; LENGTH_BYTES];
+            stream.read_exact(&mut read_len_buf).unwrap();
+            let read_len = usize::from_le_bytes(read_len_buf);
+
+            let mut read_buf = vec![0u8; read_len];
             stream.read_exact(&mut read_buf).unwrap();
-            read_buf
+            s.send(()).unwrap();
+            bincode::deserialize(&read_buf).unwrap()
         });
 
         // wait for server to start and get a client stream
         assert_eq!((), r.recv().unwrap());
         let stream = TcpStream::connect(ADDR).unwrap();
 
-        // test the wrapper
-        let (sender, receiver, handle) = wrap_tcpstream(stream);
-        let (type_buf, msg_buf) = receiver.recv().unwrap();
-        assert_eq!(type_buf, TYPE.to_le_bytes());
-        assert_eq!(msg_buf, MSG.to_vec());
+        // test the wrapper, first receive the first message from server
+        let (sender, receiver, handle) = wrap_tcpstream(stream, start_close);
+        let msg1: Msg = receiver.recv().unwrap();
+        assert_eq!(msg1, MSG1);
 
-        sender.send(MSG2.into()).unwrap();
-        sender.send(vec![]).unwrap(); // this line means close the stream
+        // send MSG2 and send a close message
+        sender.send(MSG2).unwrap();
+        assert_eq!((), r.recv().unwrap());
+        sender.send(MSG_CLOSE).unwrap();
 
         assert_eq!(server_hdl.join().unwrap(), MSG2);
         handle.join().unwrap()
