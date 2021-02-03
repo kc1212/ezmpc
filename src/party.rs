@@ -24,7 +24,7 @@ pub struct Party {
     com_scheme: commit::Scheme,
     s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
-    preprocessing_chan: Receiver<PreprocMsg>,
+    preproc_chan: Receiver<PreprocMsg>,
     s_party_chans: Vec<Sender<PartyMsg>>,
     r_party_chans: Vec<Receiver<PartyMsg>>,
 }
@@ -40,7 +40,7 @@ impl Party {
         instructions: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
-        preprocessing_chan: Receiver<PreprocMsg>,
+        preproc_chan: Receiver<PreprocMsg>,
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
         rng_seed: [usize; 4],
@@ -53,7 +53,7 @@ impl Party {
                 com_scheme: commit::Scheme {},
                 s_sync_chan,
                 r_sync_chan,
-                preprocessing_chan,
+                preproc_chan,
                 s_party_chans: s_party_chan,
                 r_party_chans: r_party_chan,
             };
@@ -94,7 +94,7 @@ impl Party {
                         debug!("[{}] Received {:?} while waiting to start", self.id, msg);
                     }
                 }
-                recv(self.preprocessing_chan) -> x => {
+                recv(self.preproc_chan) -> x => {
                     debug!("[{}] got preproc msg {:?}", self.id, x);
                     match x? {
                         PreprocMsg::Triple(msg) => {
@@ -111,7 +111,7 @@ impl Party {
         // process instructions
         loop {
             select! {
-                recv(self.preprocessing_chan) -> x => {
+                recv(self.preproc_chan) -> x => {
                     debug!("[{}] got preproc msg {:?}", self.id, x);
                     match x? {
                         PreprocMsg::Triple(msg) => {
@@ -252,14 +252,14 @@ mod tests {
     fn make_dummy_party(alpha_share: Fp, s_party_chans: Vec<Sender<PartyMsg>>, r_party_chans: Vec<Receiver<PartyMsg>>) -> Party {
         let (dummy_s_sync_chan, _) = bounded(TEST_CAP);
         let (_, dummy_r_sync_chan) = bounded(TEST_CAP);
-        let (_, dummy_preprocessing_chan) = bounded(TEST_CAP);
+        let (_, dummy_preproc_chan) = bounded(TEST_CAP);
         Party {
             id: 0,
             alpha_share,
             com_scheme: commit::Scheme {},
             s_sync_chan: dummy_s_sync_chan,
             r_sync_chan: dummy_r_sync_chan,
-            preprocessing_chan: dummy_preprocessing_chan,
+            preproc_chan: dummy_preproc_chan,
             s_party_chans,
             r_party_chans,
         }

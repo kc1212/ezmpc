@@ -110,7 +110,7 @@ pub struct OnlineNode {
     local_addr: SocketAddr,
     alpha_share: Fp,
     sync_addr: SocketAddr,
-    preprocessing_addr: SocketAddr,
+    preproc_addr: SocketAddr,
     peers: Vec<SocketAddr>,
 }
 
