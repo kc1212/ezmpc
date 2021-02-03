@@ -1,12 +1,12 @@
 use bincode;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{error, info};
-use serde::{Deserialize, de::DeserializeOwned, Serialize};
-use std::{io, unimplemented};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::thread::JoinHandle;
+use std::{io, unimplemented};
 
 use crate::algebra::Fp;
 use crate::error::ApplicationError;
@@ -23,11 +23,10 @@ fn try_shutdown(stream: &TcpStream) {
 }
 
 /// Wrap a TcpStream into channels.
-pub fn wrap_tcpstream< S, R, G>(stream: TcpStream, do_close: G) -> (Sender<S>, Receiver<R>, JoinHandle<()>)
+pub fn wrap_tcpstream<S, R>(stream: TcpStream) -> (Sender<Option<S>>, Receiver<R>, JoinHandle<()>)
 where
     S: 'static + Sync + Send + Clone + Serialize,
     R: 'static + Sync + Send + Clone + DeserializeOwned,
-    G: 'static + Sync + Send + Clone + Fn(&S) -> bool,
 {
     let (reader_s, reader_r) = bounded(SHIM_CAP);
     let (writer_s, writer_r) = bounded(SHIM_CAP);
@@ -45,6 +44,7 @@ where
                 let mut value_buf = vec![0u8; n];
                 reader.read_exact(&mut value_buf)?;
 
+                // we use expect here because we cannot recover from deserialzation failure
                 let msg: R = bincode::deserialize(&value_buf).expect("deserialization failed");
                 match reader_s.send(msg) {
                     Ok(()) => Ok(()),
@@ -68,27 +68,31 @@ where
         // read data from a channel and then send it into a stream
         loop {
             select! {
-                recv(writer_r) -> buf => {
-                    let v = buf.unwrap();
-                    if do_close(&v) {
-                        // is there another way to close the stream?
-                        info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
-                        writer.shutdown(Shutdown::Both).expect("shutdown call failed");
-                        info!("[{:?}] closed stream", writer.local_addr());
-                        break;
-                    }
-                    // construct a header with the length and concat it with the body
-                    let mut data = bincode::serialized_size(&v)
-                        .expect("failed to find serialized size")
-                        .to_le_bytes()
-                        .to_vec();
-                    data.extend(bincode::serialize(&v).expect("serialization failed"));
-                    match writer.write_all(&data) {
-                        Ok(()) => {},
-                        Err(e) => {
-                            error!("[{:?}] write error: {:?}", writer.local_addr(), e);
-                            try_shutdown(&writer);
+                recv(writer_r) -> msg_res => {
+                    let msg = msg_res.unwrap(); // TODO check unwrap
+                    match msg {
+                        None => {
+                            info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
+                            writer.shutdown(Shutdown::Both).expect("shutdown call failed");
+                            info!("[{:?}] closed stream", writer.local_addr());
                             break;
+                        }
+                        Some(m) => {
+                            // construct a header with the length and concat it with the body
+                            let mut data = bincode::serialized_size(&m)
+                                .expect("failed to find serialized size")
+                                .to_le_bytes()
+                                .to_vec();
+                            // we use expect here because we cannot recover from serialization failure
+                            data.extend(bincode::serialize(&m).expect("serialization failed"));
+                            match writer.write_all(&data) {
+                                Ok(()) => {},
+                                Err(e) => {
+                                    error!("[{:?}] write error: {:?}", writer.local_addr(), e);
+                                    try_shutdown(&writer);
+                                    break;
+                                }
+                            }
                         }
                     }
                 },
@@ -143,15 +147,11 @@ impl Node {
 mod test {
     use super::*;
     use test_env_log::test;
-    
+
     #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
     struct Msg {
         a: usize,
         close: bool,
-    }
-    
-    fn start_close(msg: &Msg) -> bool {
-        msg.close
     }
 
     #[test]
@@ -159,7 +159,6 @@ mod test {
         const ADDR: &str = "127.0.0.1:36794";
         const MSG1: Msg = Msg { a: 1, close: false };
         const MSG2: Msg = Msg { a: 2, close: false };
-        const MSG_CLOSE: Msg = Msg { a: 0, close: true };
 
         // start server in a thread
         let (s, r) = bounded(1);
@@ -169,9 +168,7 @@ mod test {
             let (mut stream, _) = listener.accept().unwrap();
 
             // write a message
-            let mut msg1_buf = bincode::serialized_size(&MSG1).unwrap()
-                .to_le_bytes()
-                .to_vec();
+            let mut msg1_buf = bincode::serialized_size(&MSG1).unwrap().to_le_bytes().to_vec();
             msg1_buf.extend(bincode::serialize(&MSG1).unwrap());
             stream.write_all(&msg1_buf).unwrap();
 
@@ -191,14 +188,14 @@ mod test {
         let stream = TcpStream::connect(ADDR).unwrap();
 
         // test the wrapper, first receive the first message from server
-        let (sender, receiver, handle) = wrap_tcpstream(stream, start_close);
+        let (sender, receiver, handle) = wrap_tcpstream(stream);
         let msg1: Msg = receiver.recv().unwrap();
         assert_eq!(msg1, MSG1);
 
         // send MSG2 and send a close message
-        sender.send(MSG2).unwrap();
+        sender.send(Some(MSG2)).unwrap();
         assert_eq!((), r.recv().unwrap());
-        sender.send(MSG_CLOSE).unwrap();
+        sender.send(None).unwrap();
 
         assert_eq!(server_hdl.join().unwrap(), MSG2);
         handle.join().unwrap()
