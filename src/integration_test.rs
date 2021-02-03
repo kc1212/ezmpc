@@ -274,6 +274,7 @@ fn integration_test_mul() {
 
 #[test]
 fn integration_test_input_output() {
+    // TODO this test flaky when turning on RUST_LOG=debug and RUST_BACKTRACE=1
     init_or_restore_context();
     let n = 3;
     let prog = vec![

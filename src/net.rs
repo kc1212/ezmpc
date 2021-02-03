@@ -19,7 +19,7 @@ const LENGTH_BYTES: usize = 8;
 
 fn try_shutdown(stream: &TcpStream) {
     match stream.shutdown(Shutdown::Both) {
-        Ok(()) => {}
+        Ok(()) => info!("[{:?}] shutdown ok", stream.local_addr()),
         Err(e) => info!("[{:?}] attempted to shutdown stream but failed: {:?}", stream.local_addr(), e),
     }
 }
@@ -62,6 +62,7 @@ where
                 Ok(()) => {}
                 Err(e) => {
                     info!("[{:?}] read failed but probably not an issue: {:?}", reader.local_addr(), e);
+                    // try to shutdown because the writer might've closed the stream too
                     try_shutdown(&reader);
                     break;
                 }
@@ -92,8 +93,8 @@ where
                 recv(shutdown_r) -> msg_res => {
                     msg_res.unwrap(); // TODO check unwrap
                     info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
-                    writer.shutdown(Shutdown::Both).expect("shutdown call failed");
-                    info!("[{:?}] closed stream", writer.local_addr());
+                    // try to shutdown because the reader might've closed the stream too
+                    try_shutdown(&writer);
                     break;
                 }
             }
@@ -204,7 +205,6 @@ mod test {
 
     #[test]
     fn test_tcpstream_wrapper() {
-        // TODO this test is flakey, find out why.
         const ADDR: &str = "127.0.0.1:36794";
         const MSG1: Msg = Msg { a: 1 };
         const MSG2: Msg = Msg { a: 2 };
