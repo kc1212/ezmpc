@@ -6,6 +6,7 @@ use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
+use serde::{Serialize, Deserialize};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::default::Default;
@@ -20,7 +21,7 @@ const REG_SIZE: usize = 32;
 type RegAddr = usize;
 
 /// Reg is the register stored by the VM.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Reg {
     clear: [Option<Fp>; REG_SIZE],
     secret: [Option<AuthShare>; REG_SIZE],

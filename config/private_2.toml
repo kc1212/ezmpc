@@ -1,0 +1,3 @@
+listen_addr = "[::1]:14272"
+alpha_share = ""
+reg = ""

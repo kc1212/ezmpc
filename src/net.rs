@@ -2,11 +2,11 @@ use bincode;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{error, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::io;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::thread::JoinHandle;
-use std::io;
 
 use crate::message::*;
 use crate::algebra::Fp;
@@ -16,6 +16,25 @@ use crate::{vm, party};
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PublicTomlNode {
+    addr: SocketAddr,
+    pk: String, // TODO undecided on the type
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PublicToml {
+    sync_addr: SocketAddr,
+    nodes: Vec<PublicTomlNode>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrivateToml {
+    listen_addr: SocketAddr,
+    alpha_share: Fp,
+    register: vm::Reg,
+}
 
 fn try_shutdown(stream: &TcpStream) {
     match stream.shutdown(Shutdown::Both) {
@@ -196,6 +215,7 @@ impl OnlineNode {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::fs::read_to_string;
     use test_env_log::test;
 
     #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
@@ -205,7 +225,7 @@ mod test {
 
     #[test]
     fn test_tcpstream_wrapper() {
-        const ADDR: &str = "127.0.0.1:36794";
+        const ADDR: &str = "127.0.0.1:36794"; // consider using port 0 as wildcard
         const MSG1: Msg = Msg { a: 1 };
         const MSG2: Msg = Msg { a: 2 };
 
@@ -248,5 +268,16 @@ mod test {
 
         assert_eq!(server_hdl.join().unwrap(), MSG2);
         handle.join().unwrap()
+    }
+
+    #[test]
+    fn test_public_toml() -> Result<(), io::Error> {
+        let toml_str = read_to_string("config/public.toml")?;
+        let public_toml: PublicToml = toml::from_str(&toml_str)?;
+        assert_eq!(public_toml.sync_addr, "[::1]:12345".parse().unwrap());
+        assert_eq!(public_toml.nodes.len(), 3);
+        assert_eq!(public_toml.nodes[0].addr, "[::1]:14270".parse().unwrap());
+        assert_eq!(public_toml.nodes[0].pk, "");
+        Ok(())
     }
 }
