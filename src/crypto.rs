@@ -1,9 +1,11 @@
-use crate::algebra::{Fp, ref_add_assign};
+//! This module contains our cryptographic primitives.
+
+use crate::algebra::Fp;
 
 use auto_ops::*;
 use num_traits::Zero;
 use rand::Rng;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// This structure represents an authenticated share.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -27,7 +29,7 @@ impl AuthShare {
     pub fn add_clear(&self, rhs: &Fp, alpha_share: &Fp, update_share: bool) -> AuthShare {
         let mut out = self.clone();
         if update_share {
-            ref_add_assign(&mut out.share, rhs); // out.share += rhs
+            out.share += rhs;
         }
         out.mac += alpha_share * rhs;
         out
@@ -54,8 +56,8 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
     let mut out: Vec<Fp> = vec![Fp::zero(); n];
     let mut sum = Fp::zero();
     for i in 0..(n - 1) {
-        let r: Fp = rng.gen();
-        ref_add_assign(&mut sum, &r); // sum += r
+        let r = Fp::random(rng);
+        sum += &r;
         out[i] = r;
     }
 
@@ -69,7 +71,7 @@ pub fn unauth_share(secret: &Fp, n: usize, rng: &mut impl Rng) -> Vec<Fp> {
 pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
     let mut out = Fp::zero();
     for share in shares {
-        ref_add_assign(&mut out, share); // out += share;
+        out += share;
     }
     out
 }
@@ -77,8 +79,8 @@ pub fn unauth_combine(shares: &Vec<Fp>) -> Fp {
 /// Generate a sharing of a random triple for `n` parties.
 /// Use the authenticated version of this function `auth_triple` unless there is a very specific reason.
 pub fn unauth_triple(n: usize, rng: &mut impl Rng) -> (Vec<Fp>, Vec<Fp>, Vec<Fp>) {
-    let a: Fp = rng.gen();
-    let b: Fp = rng.gen();
+    let a: Fp = Fp::random(rng);
+    let b: Fp = Fp::random(rng);
     let c: Fp = &a * &b;
     (unauth_share(&a, n, rng), unauth_share(&b, n, rng), unauth_share(&c, n, rng))
 }
@@ -99,8 +101,8 @@ pub fn auth_share(secret: &Fp, n: usize, alpha: &Fp, rng: &mut impl Rng) -> Vec<
 
 /// Generate a sharing of a random triple for `n` parties where `alpha` is the global MAC key.
 pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>, Vec<AuthShare>, Vec<AuthShare>) {
-    let a: Fp = rng.gen();
-    let b: Fp = rng.gen();
+    let a: Fp = Fp::random(rng);
+    let b: Fp = Fp::random(rng);
     let c: Fp = &a * &b;
     (
         auth_share(&a, n, alpha, rng),
@@ -112,12 +114,12 @@ pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>,
 pub mod commit {
     use crate::algebra::Fp;
 
-    use rand::Rng;
     use bincode;
+    use rand::Rng;
+    use serde::{Deserialize, Serialize};
     use sha3;
     use sha3::Digest;
     use std::fmt;
-    use serde::{Serialize, Deserialize};
 
     /// This is the structure that represents a commitment.
     #[derive(Serialize, Deserialize, Clone)]
@@ -188,42 +190,40 @@ pub mod commit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{init_or_restore_context};
 
     use itertools::izip;
     use num_traits::{One, Zero};
-    use rand::{Rng, SeedableRng, StdRng};
     use quickcheck_macros::quickcheck;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
-    const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
+    const TEST_SEED: [u8; 32] = [8u8; 32];
 
     #[test]
     fn test_fp_rand() {
-        init_or_restore_context();
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
-        let a: Fp = rng.gen();
-        let b: Fp = rng.gen();
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+        let a: Fp = Fp::random(rng);
+        let b: Fp = Fp::random(rng);
         assert_ne!(a, b);
     }
 
     #[test]
     fn test_unauth_sharing() {
-        init_or_restore_context();
         let n = 4;
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
-        let secret: Fp = rng.gen();
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+        let secret: Fp = Fp::random(rng);
         let shares = unauth_share(&secret, n, rng);
         let recovered = unauth_combine(&shares);
         assert_eq!(secret, recovered);
 
         // test linearity
-        let secret2: Fp = rng.gen();
+        let secret2: Fp = Fp::random(rng);
         let shares2 = unauth_share(&secret2, n, rng);
 
         let new_shares: Vec<Fp> = shares.iter().zip(&shares2).map(|(x, y)| x + y).collect();
         assert_eq!(&secret + &secret2, unauth_combine(&new_shares));
 
-        let const_term: Fp = rng.gen();
+        let const_term: Fp = Fp::random(rng);
         assert_eq!(&secret * &const_term, unauth_combine(&shares.iter().map(|s| s * &const_term).collect()));
         assert_eq!(&secret2 * &const_term, unauth_combine(&shares2.iter().map(|s| s * &const_term).collect()));
     }
@@ -262,24 +262,22 @@ mod tests {
 
     #[test]
     fn test_unauth_triple() {
-        init_or_restore_context();
         let n = 4;
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         {
             let x: Fp = Fp::one();
             let y: Fp = Fp::one() + Fp::one();
             unauth_triple_protocol(x, y, n, rng);
         }
         {
-            let x: Fp = rng.gen();
-            let y: Fp = rng.gen();
+            let x: Fp = Fp::random(rng);
+            let y: Fp = Fp::random(rng);
             unauth_triple_protocol(x, y, n, rng);
         }
     }
 
     fn auth_combine_no_assert(shares: &Vec<AuthShare>, alpha_shares: &Vec<Fp>) -> (bool, Fp) {
-        let x = unauth_combine(&shares.iter()
-            .map(|x| x.share.clone()).collect());
+        let x = unauth_combine(&shares.iter().map(|x| x.share.clone()).collect());
 
         // in practice these ds values are committed first before revealing
         let ds: Vec<_> = alpha_shares.into_iter().zip(shares).map(|(a, share)| a * &x - &share.mac).collect();
@@ -295,14 +293,13 @@ mod tests {
 
     #[test]
     fn test_auth_arithmetic() {
-        init_or_restore_context();
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         let n = 4;
-        let alpha: Fp = rng.gen();
+        let alpha: Fp = Fp::random(rng);
         let alpha_shares = unauth_share(&alpha, n, rng);
-        let a: Fp = rng.gen();
-        let b: Fp = rng.gen();
-        let const_c: Fp = rng.gen();
+        let a: Fp = Fp::random(rng);
+        let b: Fp = Fp::random(rng);
+        let const_c: Fp = Fp::random(rng);
 
         let a_shares = auth_share(&a, n, &alpha, rng);
         let b_shares = auth_share(&b, n, &alpha, rng);
@@ -330,11 +327,10 @@ mod tests {
 
     #[test]
     fn test_auth_share() {
-        init_or_restore_context();
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         let n = 4;
-        let secret: Fp = rng.gen();
-        let alpha: Fp = rng.gen();
+        let secret: Fp = Fp::random(rng);
+        let alpha: Fp = Fp::random(rng);
         let shares = auth_share(&secret, n, &alpha, rng);
 
         let result = auth_combine(&shares, &unauth_share(&alpha, n, rng));
@@ -342,7 +338,7 @@ mod tests {
 
         // test failure: bad MAC
         let mut bad_shares = shares.clone();
-        bad_shares[0].mac += Fp::one();
+        bad_shares[0].mac += &Fp::one();
         let bad_result = auth_combine_no_assert(&bad_shares, &unauth_share(&alpha, n, rng));
         assert_eq!((false, secret), bad_result);
     }
@@ -384,26 +380,25 @@ mod tests {
 
     #[test]
     fn test_auth_triple() {
-        init_or_restore_context();
         let n = 4;
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         {
-            let x: Fp = Fp::one();
-            let y: Fp = Fp::one() + Fp::one();
-            let alpha: Fp = rng.gen();
+            let x = Fp::one();
+            let y = Fp::one() + Fp::one();
+            let alpha = Fp::random(rng);
             auth_triple_protocol(x, y, n, &alpha, rng);
         }
         {
-            let x: Fp = rng.gen();
-            let y: Fp = rng.gen();
-            let alpha: Fp = rng.gen();
+            let x = Fp::random(rng);
+            let y = Fp::random(rng);
+            let alpha: Fp = Fp::random(rng);
             auth_triple_protocol(x, y, n, &alpha, rng);
         }
     }
 
     #[quickcheck]
     fn prop_commitment(secret: Fp) -> bool {
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         let scheme = commit::Scheme {};
         let (commitment, opening) = scheme.commit(secret, rng);
         scheme.verify(&opening, &commitment)
@@ -411,7 +406,7 @@ mod tests {
 
     #[quickcheck]
     fn prop_bad_commitment(secret: Fp) -> bool {
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
         let scheme = commit::Scheme {};
         let (commitment, _) = scheme.commit(secret.clone(), rng);
 

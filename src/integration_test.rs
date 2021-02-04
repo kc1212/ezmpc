@@ -1,18 +1,19 @@
 use crossbeam::channel::{bounded, Receiver, Sender};
+use log::debug;
 use num_traits::{One, Zero};
-use rand::{Rng, SeedableRng, StdRng};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use std::thread::JoinHandle;
 use test_env_log::test;
-use log::debug;
 
-use crate::algebra::{init_or_restore_context, Fp};
+use crate::algebra::Fp;
 use crate::crypto::*;
 use crate::message::*;
 use crate::party::Party;
 use crate::synchronizer::Synchronizer;
 use crate::vm;
 
-const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
+const TEST_SEED: [u8; 32] = [8u8; 32];
 const TEST_CAP: usize = 5;
 
 fn create_sync_chans(
@@ -56,7 +57,6 @@ fn get_col<T: Clone>(matrix: &Vec<Vec<T>>, col: usize) -> Vec<T> {
 
 #[test]
 fn integration_test_clear_add() {
-    init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (_preproc_sender, preproc_receiver) = bounded(TEST_CAP);
     let prog = vec![vm::Instruction::CAdd(2, 1, 0), vm::Instruction::COutput(2), vm::Instruction::Stop];
@@ -85,7 +85,6 @@ fn integration_test_clear_add() {
 
 #[test]
 fn integration_test_triple() {
-    init_or_restore_context();
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(1);
     let (preproc_sender, preproc_receiver) = bounded(TEST_CAP);
     let prog = vec![
@@ -95,7 +94,7 @@ fn integration_test_triple() {
         vm::Instruction::SOutput(2),
         vm::Instruction::Stop,
     ];
-    
+
     let zero = AuthShare {
         share: Fp::zero(),
         mac: Fp::zero(),
@@ -144,7 +143,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     let (sync_chans_for_sync, sync_chans_for_party) = create_sync_chans(n);
     let party_chans = create_party_chans(n);
 
-    let alpha: Fp = rng.gen();
+    let alpha: Fp = Fp::random(rng);
     let alpha_shares = unauth_share(&alpha, n, rng);
 
     // check how many triples and random shares we need and create a preprocessing channel for it
@@ -157,15 +156,12 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     debug!("sending {} rand shares", max_rand_count * n);
     for clear_id in 0..n {
         for _ in 0..max_rand_count {
-            let r: Fp = rng.gen();
+            let r: Fp = Fp::random(rng);
             let auth_shares = auth_share(&r, n, &alpha, rng);
             let rand_shares: Vec<_> = auth_shares
                 .iter()
                 .enumerate()
-                .map(|(i, share)| PreprocMsg::new_rand_share(
-                    share.clone(), 
-                    if clear_id == i { Some(r.clone()) } else { None }, 
-                    clear_id))
+                .map(|(i, share)| PreprocMsg::new_rand_share(share.clone(), if clear_id == i { Some(r.clone()) } else { None }, clear_id))
                 .collect();
             for (i, (s, _)) in preproc_chans.iter().enumerate() {
                 s.send(rand_shares[i].clone()).unwrap();
@@ -220,7 +216,6 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
 
 #[test]
 fn integration_test_open() {
-    init_or_restore_context();
     let n = 3;
     let prog = vec![
         vm::Instruction::Input(0, 0, 0),
@@ -229,16 +224,15 @@ fn integration_test_open() {
         vm::Instruction::Stop,
     ];
 
-    let rng = &mut StdRng::from_seed(&TEST_SEED);
-    let secret = rng.gen();
-    let expected = vec![&secret * Fp::from(n as i64)]; // every party outputs the secret, so the expected sum is secret*n
+    let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+    let secret = Fp::random(rng);
+    let expected = vec![&secret * Fp::from(n)]; // every party outputs the secret, so the expected sum is secret*n
     let regs = vec![vm::Reg::from_vec(&vec![secret], &vec![]), vm::Reg::empty(), vm::Reg::empty()];
     generic_integration_test(n, prog, regs, expected, rng);
 }
 
 #[test]
 fn integration_test_mul() {
-    init_or_restore_context();
     // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
     let n = 3;
     let prog = vec![
@@ -259,9 +253,9 @@ fn integration_test_mul() {
         vm::Instruction::Stop,
     ];
 
-    let rng = &mut StdRng::from_seed(&TEST_SEED);
-    let input_0: Fp = rng.gen();
-    let input_1: Fp = rng.gen();
+    let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+    let input_0 = Fp::random(rng);
+    let input_1 = Fp::random(rng);
     let expected = vec![&input_0 * &input_1];
 
     let regs = vec![
@@ -275,7 +269,6 @@ fn integration_test_mul() {
 #[test]
 fn integration_test_input_output() {
     // TODO this test flaky when turning on RUST_LOG=debug and RUST_BACKTRACE=1
-    init_or_restore_context();
     let n = 3;
     let prog = vec![
         vm::Instruction::Input(0, 0, 0),
@@ -287,10 +280,10 @@ fn integration_test_input_output() {
         vm::Instruction::Stop,
     ];
 
-    let rng = &mut StdRng::from_seed(&TEST_SEED);
-    let input_0: Fp = rng.gen();
-    let input_1: Fp = rng.gen();
-    let input_2: Fp = rng.gen();
+    let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+    let input_0 = Fp::random(rng);
+    let input_1 = Fp::random(rng);
+    let input_2 = Fp::random(rng);
     let expected = vec![input_0.clone(), input_1.clone(), input_2.clone()];
     let regs = vec![
         vm::Reg::from_vec(&vec![input_0, Fp::zero(), Fp::zero()], &vec![]),

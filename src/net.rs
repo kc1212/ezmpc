@@ -8,11 +8,11 @@ use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::thread::JoinHandle;
 
-use crate::message::*;
 use crate::algebra::Fp;
 use crate::error::ApplicationError;
 use crate::message::PartyID;
-use crate::{vm, party};
+use crate::message::*;
+use crate::{party, vm};
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
@@ -135,7 +135,7 @@ pub struct OnlineNode {
 }
 
 impl OnlineNode {
-    pub fn run(&self, prog: Vec<vm::Instruction>, reg: vm::Reg, seed: [usize; 4]) -> Result<Vec<Fp>, ApplicationError> {
+    pub fn run(&self, prog: Vec<vm::Instruction>, reg: vm::Reg, seed: [u8; 32]) -> Result<Vec<Fp>, ApplicationError> {
         let listener = TcpListener::bind(self.local_addr)?;
         let mut peer_handlers = vec![];
         let mut preproc_items = None;
@@ -183,7 +183,7 @@ impl OnlineNode {
         let (sync_sender_chan, sync_receiver_chan, sync_shutdown_chan, sync_handler) = sync_items.unwrap();
         let (_preproc_sender_chan, preproc_receiver_chan, preproc_shutdown_chan, preproc_handler) = preproc_items.unwrap();
         let party_handler = party::Party::spawn(
-            self.id, 
+            self.id,
             self.alpha_share.clone(),
             reg,
             prog,
@@ -192,7 +192,8 @@ impl OnlineNode {
             preproc_receiver_chan,
             peer_sender_chans,
             peer_receiver_chans,
-            seed);
+            seed,
+        );
 
         // join the threads when the party is done
         let res = party_handler.join().unwrap()?; // TODO should we unwrap?

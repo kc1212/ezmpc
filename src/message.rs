@@ -6,7 +6,7 @@ use crate::crypto::commit;
 
 use crossbeam::channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use log::debug;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::time::Duration;
 

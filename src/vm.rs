@@ -1,12 +1,12 @@
 //! The virtual machine that executes instructions on secret-shared data is defined in this module.
 
-use crate::algebra::{Fp, init_or_restore_context};
+use crate::algebra::Fp;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::default::Default;
@@ -16,7 +16,7 @@ use std::thread::JoinHandle;
 pub(crate) const DEFAULT_CAP: usize = 5;
 
 // for some reason Default trait for arrays only works up to 32 elements
-const REG_SIZE: usize = 32; 
+const REG_SIZE: usize = 32;
 
 type RegAddr = usize;
 
@@ -141,7 +141,6 @@ impl VM {
         s_chan: Sender<Action>,
     ) -> JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
-            init_or_restore_context();
             let mut vm = VM::new(id, alpha_share, reg, triple_chan, rand_chan);
             vm.listen(r_chan, s_chan)
         })
@@ -198,9 +197,7 @@ impl VM {
     where
         F: Fn(&Fp, &Fp) -> Fp,
     {
-        let c: Option<Fp> = self.reg.clear[r1].as_ref()
-            .zip(self.reg.clear[r2].as_ref())
-            .map(|(a, b)| op(a, b));
+        let c: Option<Fp> = self.reg.clear[r1].as_ref().zip(self.reg.clear[r2].as_ref()).map(|(a, b)| op(a, b));
         self.reg.clear[r0] = Some(opt_to_res(c)?);
         Ok(())
     }
@@ -209,15 +206,14 @@ impl VM {
     where
         F: Fn(&AuthShare, &AuthShare) -> AuthShare,
     {
-        let c = self.reg.secret[r1].as_ref()
-            .zip(self.reg.secret[r2].as_ref())
-            .map(|(a, b)| op(a, b));
+        let c = self.reg.secret[r1].as_ref().zip(self.reg.secret[r2].as_ref()).map(|(a, b)| op(a, b));
         self.reg.secret[r0] = Some(opt_to_res(c)?);
         Ok(())
     }
 
     fn do_mixed_add(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr, id: PartyID) -> Result<(), MPCError> {
-        let c = self.reg.secret[s_r1].as_ref()
+        let c = self.reg.secret[s_r1]
+            .as_ref()
             .zip(self.reg.clear[c_r2].as_ref())
             .map(|(a, b)| a.add_clear(&b, &self.alpha_share, self.id == id));
         self.reg.secret[s_r0] = Some(opt_to_res(c)?);
@@ -225,7 +221,8 @@ impl VM {
     }
 
     fn do_mixed_mul(&mut self, s_r0: RegAddr, s_r1: RegAddr, c_r2: RegAddr) -> Result<(), MPCError> {
-        let c = self.reg.secret[s_r1].as_ref()
+        let c = self.reg.secret[s_r1]
+            .as_ref()
             .zip(self.reg.clear[c_r2].as_ref())
             .map(|(a, b)| a.mul_clear(&b));
         self.reg.secret[s_r0] = Some(opt_to_res(c)?);
@@ -317,7 +314,6 @@ impl VM {
                 Ok(x.share)
             }
         }
-
     }
 
     fn do_mac_check(&mut self, s_chan: &Sender<Action>) -> Result<(), MPCError> {
@@ -495,7 +491,9 @@ mod tests {
         let a_share = AuthShare { share: a, mac: Fp::zero() };
         let b_share = AuthShare { share: b, mac: Fp::zero() };
         let c_share = AuthShare { share: c, mac: Fp::zero() };
-        s_triple_chan.send(TripleMsg::new(a_share.clone(), b_share.clone(), c_share.clone())).unwrap();
+        s_triple_chan
+            .send(TripleMsg::new(a_share.clone(), b_share.clone(), c_share.clone()))
+            .unwrap();
         let result = vm_runner(prog, Reg::empty(), r_triple_chan, dummy_rand_chan).unwrap();
         result.len() == 3 && result[0] == a_share.share && result[1] == b_share.share && result[2] == c_share.share
     }

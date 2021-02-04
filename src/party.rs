@@ -2,18 +2,19 @@
 //! It assumes perfect channels for sending and receiving messages.
 //! The actual networking layer is handled by an outer layer.
 
-use crate::algebra::{Fp, init_or_restore_context};
+use crate::algebra::Fp;
 use crate::crypto::commit;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message;
-use crate::message::{PartyID, PartyMsg, SyncMsg, SyncReplyMsg, PreprocMsg};
+use crate::message::{PartyID, PartyMsg, PreprocMsg, SyncMsg, SyncReplyMsg};
 use crate::vm;
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{debug, error};
 use num_traits::Zero;
-use rand::{Rng, SeedableRng, StdRng};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use std::thread;
 
 const FORWARDING_CAP: usize = 1024;
@@ -43,10 +44,9 @@ impl Party {
         preproc_chan: Receiver<PreprocMsg>,
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
-        rng_seed: [usize; 4],
+        rng_seed: [u8; 32],
     ) -> thread::JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
-            init_or_restore_context();
             let p = Party {
                 id,
                 alpha_share,
@@ -61,8 +61,8 @@ impl Party {
         })
     }
 
-    fn listen(&self, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [usize; 4]) -> Result<Vec<Fp>, MPCError> {
-        let rng = &mut StdRng::from_seed(&rng_seed);
+    fn listen(&self, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [u8; 32]) -> Result<Vec<Fp>, MPCError> {
+        let rng = &mut ChaCha20Rng::from_seed(rng_seed);
 
         // init forwarding channels
         let (s_inner_triple_chan, r_inner_triple_chan) = bounded(FORWARDING_CAP);
@@ -246,7 +246,7 @@ mod tests {
     use super::*;
     use crate::crypto::{auth_share, unauth_share};
 
-    const TEST_SEED: [usize; 4] = [0, 1, 2, 3];
+    const TEST_SEED: [u8; 32] = [8u8; 32];
     const TEST_CAP: usize = 5;
 
     fn make_dummy_party(alpha_share: Fp, s_party_chans: Vec<Sender<PartyMsg>>, r_party_chans: Vec<Receiver<PartyMsg>>) -> Party {
@@ -267,10 +267,9 @@ mod tests {
 
     #[test]
     fn test_mac_check() {
-        init_or_restore_context();
         let n = 2;
-        let rng = &mut StdRng::from_seed(&TEST_SEED);
-        let alpha = rng.gen();
+        let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
+        let alpha = Fp::random(rng);
         let alpha_shares = unauth_share(&alpha, n, rng);
 
         // note:
@@ -286,7 +285,7 @@ mod tests {
             vec![r_party_chan0, r_party_chan2],
         );
 
-        let x = rng.gen();
+        let x = Fp::random(rng);
         let x_shares = auth_share(&x, n, &alpha, rng);
 
         // use the wrong commitment
@@ -311,7 +310,7 @@ mod tests {
 
         // use the wrong x so that the opening is not 0
         {
-            let bad_alpha = rng.gen();
+            let bad_alpha = Fp::random(rng);
             let x_shares_2 = auth_share(&x, n, &bad_alpha, rng);
 
             // receive a commitment from party and send a commitment
