@@ -11,7 +11,6 @@ use std::ops::*;
 #[PrimeFieldGenerator = "7"]
 #[PrimeFieldReprEndianness = "little"]
 struct InnerFp([u64; 4]);
-const LIMB_COUNT: usize = 4; // this value must match the size of InnerFp
 
 /// Fp is a prime field element.
 /// It is a wrapper type around the type generate by the `ff` crate
@@ -145,10 +144,5 @@ mod test {
         // consider using serde_test crate
         let buf = bincode::serialize(&x).unwrap();
         x == bincode::deserialize(&buf).unwrap()
-    }
-
-    #[quickcheck]
-    fn prop_limb_count(x: Fp) -> bool {
-        x.0 .0.len() == LIMB_COUNT
     }
 }
