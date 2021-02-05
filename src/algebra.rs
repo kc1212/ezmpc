@@ -2,7 +2,7 @@ use auto_ops::*;
 use ff::*;
 use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
-use rand_core::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::ops::*;
 
@@ -11,12 +11,17 @@ use std::ops::*;
 #[PrimeFieldGenerator = "7"]
 #[PrimeFieldReprEndianness = "little"]
 struct InnerFp([u64; 4]);
+const LIMB_COUNT: usize = 4; // this value must match the size of InnerFp
 
-#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
+/// Fp is a prime field element.
+/// It is a wrapper type around the type generate by the `ff` crate
+/// because we want to implement our own operators.
+#[derive(Deserialize, Serialize, Clone, Eq, PartialEq, Debug)]
 pub struct Fp(InnerFp);
 
 impl Fp {
-    pub fn random(rng: &mut impl RngCore) -> Fp {
+    /// Generate a random field element.
+    pub fn random(rng: &mut impl Rng) -> Fp {
         Fp(InnerFp::random(rng))
     }
 }
@@ -140,5 +145,10 @@ mod test {
         // consider using serde_test crate
         let buf = bincode::serialize(&x).unwrap();
         x == bincode::deserialize(&buf).unwrap()
+    }
+
+    #[quickcheck]
+    fn prop_limb_count(x: Fp) -> bool {
+        x.0 .0.len() == LIMB_COUNT
     }
 }

@@ -1,6 +1,7 @@
 use bincode;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{error, info};
+use ron;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io;
 use std::io::{Read, Write};
@@ -10,7 +11,6 @@ use std::thread::JoinHandle;
 
 use crate::algebra::Fp;
 use crate::error::ApplicationError;
-use crate::message::PartyID;
 use crate::message::*;
 use crate::{party, vm};
 
@@ -24,16 +24,15 @@ pub struct PublicTomlNode {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-struct PublicToml {
+pub struct PublicConfig {
     sync_addr: SocketAddr,
     nodes: Vec<PublicTomlNode>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PrivateToml {
+pub struct PrivateConfig {
     listen_addr: SocketAddr,
     alpha_share: Fp,
-    register: vm::Reg,
 }
 
 fn try_shutdown(stream: &TcpStream) {
@@ -272,13 +271,33 @@ mod test {
     }
 
     #[test]
-    fn test_public_toml() -> Result<(), io::Error> {
-        let toml_str = read_to_string("config/public.toml")?;
-        let public_toml: PublicToml = toml::from_str(&toml_str)?;
-        assert_eq!(public_toml.sync_addr, "[::1]:12345".parse().unwrap());
-        assert_eq!(public_toml.nodes.len(), 3);
-        assert_eq!(public_toml.nodes[0].addr, "[::1]:14270".parse().unwrap());
-        assert_eq!(public_toml.nodes[0].pk, "");
+    fn test_public_ron() -> Result<(), io::Error> {
+        let ron_str = read_to_string("config/public.ron")?;
+        let public_ron: PublicConfig = ron::from_str(&ron_str).unwrap();
+        assert_eq!(public_ron.sync_addr, "[::1]:12345".parse().unwrap());
+        assert_eq!(public_ron.nodes.len(), 3);
+        assert_eq!(public_ron.nodes[0].addr, "[::1]:14270".parse().unwrap());
+        assert_eq!(public_ron.nodes[0].pk, "");
+        Ok(())
+    }
+
+    #[test]
+    fn test_private_ron() -> Result<(), io::Error> {
+        {
+            let ron_str = read_to_string("config/private_0.ron")?;
+            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.listen_addr, "[::1]:14270".parse().unwrap());
+        }
+        {
+            let ron_str = read_to_string("config/private_1.ron")?;
+            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.listen_addr, "[::1]:14271".parse().unwrap());
+        }
+        {
+            let ron_str = read_to_string("config/private_2.ron")?;
+            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.listen_addr, "[::1]:14272".parse().unwrap());
+        }
         Ok(())
     }
 }

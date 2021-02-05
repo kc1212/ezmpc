@@ -5,7 +5,6 @@ use crate::message;
 use crate::vm;
 
 use crossbeam::channel;
-use toml;
 use std::fmt;
 use std::time::Duration;
 use thiserror::Error;
@@ -67,8 +66,6 @@ pub enum MPCError {
 pub enum ApplicationError {
     #[error(transparent)]
     IOError(#[from] std::io::Error),
-    #[error(transparent)]
-    TomlError(#[from] toml::de::Error),
     #[error(transparent)]
     MPCError(#[from] MPCError),
 }
