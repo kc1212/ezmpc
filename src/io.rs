@@ -1,7 +1,6 @@
 use bincode;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{error, info};
-use ron;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io;
 use std::io::{Read, Write};
@@ -13,26 +12,32 @@ use crate::algebra::Fp;
 use crate::error::ApplicationError;
 use crate::message::*;
 use crate::{party, vm};
+use std::collections::HashMap;
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicTomlNode {
-    addr: SocketAddr,
-    pk: String, // TODO undecided on the type
+    pub addr: SocketAddr,
+    pub pk: String, // TODO undecided on the type
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicConfig {
-    sync_addr: SocketAddr,
-    nodes: Vec<PublicTomlNode>,
+    pub sync_addr: SocketAddr,
+    pub nodes: Vec<PublicTomlNode>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrivateConfig {
     listen_addr: SocketAddr,
     alpha_share: Fp,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SynchronizerConfig {
+    pub listen_addr: SocketAddr,
 }
 
 fn try_shutdown(stream: &TcpStream) {
@@ -42,8 +47,13 @@ fn try_shutdown(stream: &TcpStream) {
     }
 }
 
+/// discover other nodes
+pub fn start_discovery(target_ids: Vec<PartyID>) -> HashMap<PartyID, TcpStream> {
+    unimplemented!()
+}
+
 /// Wrap a TcpStream into channels
-fn wrap_tcpstream<S, R>(stream: TcpStream) -> (Sender<S>, Receiver<R>, Sender<()>, JoinHandle<()>)
+pub fn wrap_tcpstream<S, R>(stream: TcpStream) -> (Sender<S>, Receiver<R>, Sender<()>, JoinHandle<()>)
 where
     S: 'static + Sync + Send + Clone + Serialize,
     R: 'static + Sync + Send + Clone + DeserializeOwned,
@@ -151,6 +161,8 @@ impl OnlineNode {
             }
 
             let stream = stream_result?;
+            // TODO the connections below need to be authenticated, perhaps use this strategy
+            // https://github.com/dedis/onet/blob/1cb59eb5e8dbd94973b851b540d4ad91d470fd77/network/tls.go#L27
             match stream.peer_addr() {
                 Ok(addr) => {
                     if addr == self.sync_addr && sync_items.is_none() {
@@ -215,6 +227,7 @@ impl OnlineNode {
 #[cfg(test)]
 mod test {
     use super::*;
+    use ron;
     use std::fs::read_to_string;
     use test_env_log::test;
 
@@ -278,6 +291,14 @@ mod test {
         assert_eq!(public_ron.nodes.len(), 3);
         assert_eq!(public_ron.nodes[0].addr, "[::1]:14270".parse().unwrap());
         assert_eq!(public_ron.nodes[0].pk, "");
+        Ok(())
+    }
+
+    #[test]
+    fn test_synchronizer_ron() -> Result<(), io::Error> {
+        let ron_str = read_to_string("config/synchronizer.ron")?;
+        let public_ron: SynchronizerConfig = ron::from_str(&ron_str).unwrap();
+        assert_eq!(public_ron.listen_addr, "[::1]:12345".parse().unwrap());
         Ok(())
     }
 
