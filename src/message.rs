@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::time::Duration;
 
-pub type PartyID = usize;
+pub type PartyID = u32;
 
 /// Broadcast a message of type `T` to all the channels in `s_chans`.
 pub(crate) fn broadcast<T: Clone + Debug>(s_chans: &Vec<Sender<T>>, m: T) -> Result<(), SendError<T>> {

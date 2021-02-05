@@ -1,7 +1,9 @@
 use bincode;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{error, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -12,7 +14,7 @@ use crate::algebra::Fp;
 use crate::error::ApplicationError;
 use crate::message::*;
 use crate::{party, vm};
-use std::collections::HashMap;
+use std::time::Duration;
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
@@ -47,9 +49,40 @@ fn try_shutdown(stream: &TcpStream) {
     }
 }
 
-/// discover other nodes
-pub fn start_discovery(target_ids: Vec<PartyID>) -> HashMap<PartyID, TcpStream> {
-    unimplemented!()
+/// Discover other nodes in the system.
+/// This function should be used by the synchronizer who coordinates all the communication.
+/// The synchronizer should start as the first node.
+/// Every other node connects to the synchronizer.
+/// When all the nodes are online, the synchronizer sends a "form cluster" command to all other nodes.
+/// TODO: use TLS
+pub fn start_discovery(listen_addr: SocketAddr, target_ids: Vec<PartyID>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+    let mut out: HashMap<PartyID, TcpStream> = HashMap::new();
+    let listener = TcpListener::bind(listen_addr)?;
+    for stream_res in listener.incoming() {
+        let mut stream = stream_res?;
+        info!("[{:?}] found peer {:?}", listener.local_addr(), stream.peer_addr());
+
+        let candidate_id = stream.read_u32::<LittleEndian>()?;
+        if !out.contains_key(&candidate_id) && target_ids.contains(&candidate_id) {
+            out.insert(candidate_id, stream);
+        } else {
+            info!("[{:?}] shutting down bad peer with id {}", listener.local_addr(), candidate_id);
+            stream.shutdown(Shutdown::Both)?;
+        }
+
+        if out.len() == target_ids.len() {
+            info!("[{:?}] all peers connected, sending 'form cluster' command", listener.local_addr());
+            break;
+        }
+    }
+
+    for stream in out.values_mut() {
+        // NOTE for now the 'form cluster' command is '42'
+        // and we expect an 'ACK'
+        stream.write_u8(42)?;
+    }
+    info!("[{:?}] 'form cluster' message sent", listener.local_addr());
+    Ok(out)
 }
 
 /// Wrap a TcpStream into channels
@@ -224,6 +257,22 @@ impl OnlineNode {
     }
 }
 
+pub fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> Result<TcpStream, io::Error> {
+    let mut last_error = io::Error::new(io::ErrorKind::Other, "dummy error");
+    for _ in 0..tries {
+        match TcpStream::connect(addr.clone()) {
+            Ok(stream) => {
+                return Ok(stream);
+            }
+            Err(e) => {
+                last_error = e;
+                thread::sleep(interval);
+            }
+        }
+    }
+    Err(last_error)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -319,6 +368,39 @@ mod test {
             let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
             assert_eq!(private_ron.listen_addr, "[::1]:14272".parse().unwrap());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_discovery() -> Result<(), io::Error> {
+        let listen_addr: SocketAddr = "[::1]:12345".parse().unwrap();
+        let target_ids: Vec<PartyID> = vec![0, 1];
+        let handler = thread::spawn(move || start_discovery(listen_addr, target_ids));
+
+        let mut client_bad = retry_connection(listen_addr, 10, Duration::from_millis(100))?;
+        client_bad.write_u32::<LittleEndian>(2)?;
+        client_bad.read_u8().expect_err("remote should close connection with bad party ID");
+
+        let mut client0 = TcpStream::connect(listen_addr)?;
+        let mut client1 = TcpStream::connect(listen_addr)?;
+
+        client0.write_u32::<LittleEndian>(0)?;
+        client1.write_u32::<LittleEndian>(1)?;
+
+        let v0 = client0.read_u8()?;
+        let v1 = client1.read_u8()?;
+        assert_eq!(42, v0);
+        assert_eq!(42, v1);
+
+        let mut res = handler.join().expect("discovery thread panicked")?;
+        for stream in res.values_mut() {
+            stream.write_u8(88)?;
+        }
+
+        let w0 = client0.read_u8()?;
+        let w1 = client1.read_u8()?;
+        assert_eq!(88, w0);
+        assert_eq!(88, w1);
         Ok(())
     }
 }

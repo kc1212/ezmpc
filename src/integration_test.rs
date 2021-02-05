@@ -161,7 +161,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
             let rand_shares: Vec<_> = auth_shares
                 .iter()
                 .enumerate()
-                .map(|(i, share)| PreprocMsg::new_rand_share(share.clone(), if clear_id == i { Some(r.clone()) } else { None }, clear_id))
+                .map(|(i, share)| PreprocMsg::new_rand_share(share.clone(), if clear_id == i { Some(r.clone()) } else { None }, clear_id as PartyID))
                 .collect();
             for (i, (s, _)) in preproc_chans.iter().enumerate() {
                 s.send(rand_shares[i].clone()).unwrap();
@@ -188,7 +188,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     let party_handles: Vec<JoinHandle<_>> = (0..n)
         .map(|i| {
             let party_handle = Party::spawn(
-                i,
+                i as PartyID,
                 alpha_shares[i].clone(),
                 regs[i].clone(),
                 prog.clone(),

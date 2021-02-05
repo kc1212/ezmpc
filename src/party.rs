@@ -212,7 +212,7 @@ impl Party {
                         Some(e) => self.bcast(PartyMsg::Elem(e))?,
                         None => (),
                     };
-                    let e = self.r_party_chans[id].recv_timeout(TIMEOUT)?.unwrap_elem();
+                    let e = self.r_party_chans[id as usize].recv_timeout(TIMEOUT)?.unwrap_elem();
                     sender.send(e)?
                 }
                 vm::Action::Check(openings, sender) => {
