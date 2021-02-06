@@ -4,17 +4,18 @@ use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{debug, error, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::read_to_string;
 use std::io;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use crate::algebra::Fp;
 use crate::error::ApplicationError;
 use crate::message::*;
-use crate::{party, vm};
-use std::time::Duration;
+use crate::synchronizer;
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
@@ -33,10 +34,49 @@ pub struct PublicConfig {
     pub nodes: Vec<NodeConfig>,
 }
 
+impl PublicConfig {
+    pub fn arg_name() -> &'static str {
+        "PUBLIC_CONFIG"
+    }
+
+    pub fn from_file(f: &str) -> Result<PublicConfig, io::Error> {
+        let s = read_to_string(f)?;
+        ron::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrivateConfig {
-    listen_addr: SocketAddr,
-    alpha_share: Fp,
+    pub id: PartyID,
+    pub listen_addr: SocketAddr,
+    pub alpha_share: Fp,
+}
+
+impl PrivateConfig {
+    pub fn arg_name() -> &'static str {
+        "PRIVATE_CONFIG"
+    }
+
+    pub fn from_file(f: &str) -> Result<PrivateConfig, io::Error> {
+        let s = read_to_string(f)?;
+        ron::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SynchronizerConfig {
+    pub listen_addr: SocketAddr,
+}
+
+impl SynchronizerConfig {
+    pub fn arg_name() -> &'static str {
+        "SYNCHRONIZER_CONFIG"
+    }
+
+    pub fn from_file(f: &str) -> Result<SynchronizerConfig, io::Error> {
+        let s = read_to_string(f)?;
+        ron::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
 }
 
 fn pp(x: &io::Result<SocketAddr>) -> String {
@@ -44,11 +84,6 @@ fn pp(x: &io::Result<SocketAddr>) -> String {
         Ok(addr) => addr.to_string(),
         Err(_) => "xxxx:xxxx".to_string(),
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SynchronizerConfig {
-    pub listen_addr: SocketAddr,
 }
 
 fn try_shutdown(stream: &TcpStream) {
@@ -64,7 +99,7 @@ fn try_shutdown(stream: &TcpStream) {
 /// Every other node connects to the synchronizer.
 /// When all the nodes are online, the synchronizer sends a "form cluster" command to all other nodes.
 /// TODO: use TLS
-pub fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
     let mut out: HashMap<PartyID, TcpStream> = HashMap::new();
     let listener = TcpListener::bind(listen_addr)?;
     for stream_res in listener.incoming() {
@@ -102,7 +137,7 @@ pub fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Re
 
 /// Connect to the discovery and wait for the 'form cluster' message.
 /// Retruns a TcpStream that is connected to the synchronizer.
-pub fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io::Error> {
+fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io::Error> {
     let mut stream = retry_connection(sync_addr, 1000, Duration::from_millis(500))?;
     stream.write_u32::<LittleEndian>(my_id)?;
     let signal = stream.read_u8()?;
@@ -118,7 +153,7 @@ pub fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io
 /// Then, accept connections from IDs that are lower than `my_id`.
 /// Make TCP connections to IDs that are higher than mine.
 /// If there are none, do not make TCP connections.
-pub fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConfig>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConfig>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
     // spawn a thread to accept valid connections
     let all_ids: Vec<PartyID> = all_nodes.iter().map(|x| x.id).collect();
     let ids_to_connect: Vec<PartyID> = all_ids.clone().into_iter().filter(|id| *id < my_id).collect();
@@ -179,7 +214,7 @@ pub fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeC
 }
 
 /// Wrap a TcpStream into channels
-pub fn wrap_tcpstream<S, R>(stream: TcpStream) -> (Sender<S>, Receiver<R>, Sender<()>, JoinHandle<()>)
+fn wrap_tcpstream<S, R>(stream: TcpStream) -> (Sender<S>, Receiver<R>, Sender<()>, JoinHandle<()>)
 where
     S: 'static + Sync + Send + Clone + Serialize,
     R: 'static + Sync + Send + Clone + DeserializeOwned,
@@ -259,98 +294,7 @@ where
     (writer_s, reader_r, shutdown_s, hdl)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct OnlineNode {
-    id: PartyID,
-    local_addr: SocketAddr,
-    alpha_share: Fp,
-    sync_addr: SocketAddr,
-    preproc_addr: SocketAddr,
-    peers: Vec<SocketAddr>,
-}
-
-impl OnlineNode {
-    pub fn run(&self, prog: Vec<vm::Instruction>, reg: vm::Reg, seed: [u8; 32]) -> Result<Vec<Fp>, ApplicationError> {
-        let listener = TcpListener::bind(self.local_addr)?;
-        let mut peer_handlers = vec![];
-        let mut preproc_items = None;
-        let mut sync_items = None;
-
-        let mut connected_peers = vec![];
-        let mut peer_sender_chans = vec![];
-        let mut peer_receiver_chans = vec![];
-        let mut peer_shutdown_chans = vec![];
-
-        for stream_result in listener.incoming() {
-            if preproc_items.is_some() && sync_items.is_some() && connected_peers.len() == self.peers.len() {
-                break;
-            }
-
-            let stream = stream_result?;
-            // TODO the connections below need to be authenticated, perhaps use this strategy
-            // https://github.com/dedis/onet/blob/1cb59eb5e8dbd94973b851b540d4ad91d470fd77/network/tls.go#L27
-            match stream.peer_addr() {
-                Ok(addr) => {
-                    if addr == self.sync_addr && sync_items.is_none() {
-                        let (s, r, shutdown_s, h) = wrap_tcpstream::<SyncReplyMsg, SyncMsg>(stream);
-                        sync_items = Some((s, r, shutdown_s, h));
-                    } else if addr == self.preproc_addr && preproc_items.is_none() {
-                        let (s, r, shutdown_s, h) = wrap_tcpstream::<PreprocMsg, PreprocMsg>(stream);
-                        preproc_items = Some((s, r, shutdown_s, h));
-                    } else if self.peers.contains(&addr) && !connected_peers.contains(&addr) {
-                        let (s, r, shutdown_s, h) = wrap_tcpstream::<PartyMsg, PartyMsg>(stream);
-                        peer_sender_chans.push(s);
-                        peer_receiver_chans.push(r);
-                        peer_shutdown_chans.push(shutdown_s);
-                        peer_handlers.push(h);
-                        connected_peers.push(addr);
-                    } else {
-                        try_shutdown(&stream);
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    error!("[{}] unable to get peer address: {:?}", pp(&stream.local_addr()), e);
-                    continue;
-                }
-            };
-        }
-
-        // start the party
-        let (sync_sender_chan, sync_receiver_chan, sync_shutdown_chan, sync_handler) = sync_items.unwrap();
-        let (_preproc_sender_chan, preproc_receiver_chan, preproc_shutdown_chan, preproc_handler) = preproc_items.unwrap();
-        let party_handler = party::Party::spawn(
-            self.id,
-            self.alpha_share.clone(),
-            reg,
-            prog,
-            sync_sender_chan,
-            sync_receiver_chan,
-            preproc_receiver_chan,
-            peer_sender_chans,
-            peer_receiver_chans,
-            seed,
-        );
-
-        // join the threads when the party is done
-        let res = party_handler.join().unwrap()?; // TODO should we unwrap?
-        sync_shutdown_chan.send(()).unwrap();
-        preproc_shutdown_chan.send(()).unwrap();
-        for c in peer_shutdown_chans {
-            c.send(()).unwrap();
-        }
-
-        // TODO what to do with these unwrap?
-        sync_handler.join().unwrap();
-        preproc_handler.join().unwrap();
-        for h in peer_handlers {
-            h.join().unwrap();
-        }
-        Ok(res)
-    }
-}
-
-pub fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> Result<TcpStream, io::Error> {
+fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> Result<TcpStream, io::Error> {
     let mut last_error = io::Error::new(io::ErrorKind::Other, "dummy error");
     for _ in 0..tries {
         match TcpStream::connect(addr.clone()) {
@@ -366,12 +310,62 @@ pub fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> R
     Err(last_error)
 }
 
+pub fn synchronizer_main(public_ron: PublicConfig, synchronizer_ron: SynchronizerConfig) -> Result<(), ApplicationError> {
+    let ids: Vec<PartyID> = public_ron.nodes.clone().iter().map(|x| x.id).collect();
+    let stream_map = start_discovery(synchronizer_ron.listen_addr, &ids)?;
+
+    let mut peer_handlers = vec![];
+    let mut peer_sender_chans = vec![];
+    let mut peer_receiver_chans = vec![];
+    let mut peer_shutdown_chans = vec![];
+
+    for (_id, stream) in stream_map {
+        let (s, r, shutdown_s, h) = wrap_tcpstream::<SyncMsg, SyncReplyMsg>(stream);
+        peer_sender_chans.push(s);
+        peer_receiver_chans.push(r);
+        peer_shutdown_chans.push(shutdown_s);
+        peer_handlers.push(h);
+    }
+
+    let sync_handle = synchronizer::Synchronizer::spawn(peer_sender_chans, peer_receiver_chans);
+    sync_handle.join().expect("synchronizer thread panicked")?;
+    for h in peer_handlers {
+        h.join().unwrap();
+    }
+    Ok(())
+}
+
+pub fn online_node_main(public_ron: PublicConfig, private_ron: PrivateConfig) -> Result<(), ApplicationError> {
+    let listener = TcpListener::bind(private_ron.listen_addr)?;
+    let sync_stream = wait_start(public_ron.sync_addr, private_ron.id)?;
+    let (sync_s, sync_r, sync_shutdown, sync_h) = wrap_tcpstream::<SyncReplyMsg, SyncMsg>(sync_stream);
+
+    let stream_map = form_cluster(listener, private_ron.id, &public_ron.nodes)?;
+
+    let mut peer_handlers = vec![];
+    let mut peer_sender_chans = vec![];
+    let mut peer_receiver_chans = vec![];
+    let mut peer_shutdown_chans = vec![];
+
+    for (_id, stream) in stream_map {
+        let (s, r, shutdown_s, h) = wrap_tcpstream::<PartyMsg, PartyMsg>(stream);
+        peer_sender_chans.push(s);
+        peer_receiver_chans.push(r);
+        peer_shutdown_chans.push(shutdown_s);
+        peer_handlers.push(h);
+    }
+
+    // let party_handle = Party::spawn(private_ron.id, private_ron.alpha_share.clone(), )
+    // TODO
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crossbeam;
     use ron;
-    use std::fs::read_to_string;
     use test_env_log::test;
 
     #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
@@ -450,16 +444,19 @@ mod test {
         {
             let ron_str = read_to_string("config/private_0.ron")?;
             let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.id, 0);
             assert_eq!(private_ron.listen_addr, "[::1]:14270".parse().unwrap());
         }
         {
             let ron_str = read_to_string("config/private_1.ron")?;
             let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.id, 1);
             assert_eq!(private_ron.listen_addr, "[::1]:14271".parse().unwrap());
         }
         {
             let ron_str = read_to_string("config/private_2.ron")?;
             let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_ron.id, 2);
             assert_eq!(private_ron.listen_addr, "[::1]:14272".parse().unwrap());
         }
         Ok(())
