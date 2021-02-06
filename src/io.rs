@@ -1,7 +1,7 @@
 use bincode;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
@@ -18,23 +18,32 @@ use std::time::Duration;
 
 const TCPSTREAM_CAP: usize = 1000;
 const LENGTH_BYTES: usize = 8;
+const FORM_CLUSTER: u8 = 42;
+const FORM_CLUSTER_ACK: u8 = 41;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PublicTomlNode {
+pub struct NodeConfig {
     pub addr: SocketAddr,
-    pub pk: String, // TODO undecided on the type
+    pub id: PartyID,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicConfig {
     pub sync_addr: SocketAddr,
-    pub nodes: Vec<PublicTomlNode>,
+    pub nodes: Vec<NodeConfig>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrivateConfig {
     listen_addr: SocketAddr,
     alpha_share: Fp,
+}
+
+fn pp(x: &io::Result<SocketAddr>) -> String {
+    match x {
+        Ok(addr) => addr.to_string(),
+        Err(_) => "xxxx:xxxx".to_string(),
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -44,8 +53,8 @@ pub struct SynchronizerConfig {
 
 fn try_shutdown(stream: &TcpStream) {
     match stream.shutdown(Shutdown::Both) {
-        Ok(()) => info!("[{:?}] shutdown ok", stream.local_addr()),
-        Err(e) => info!("[{:?}] attempted to shutdown stream but failed: {:?}", stream.local_addr(), e),
+        Ok(()) => info!("[{}] shutdown ok", pp(&stream.local_addr())),
+        Err(e) => info!("[{}] attempted to shutdown stream but failed: {:?}", pp(&stream.local_addr()), e),
     }
 }
 
@@ -55,33 +64,117 @@ fn try_shutdown(stream: &TcpStream) {
 /// Every other node connects to the synchronizer.
 /// When all the nodes are online, the synchronizer sends a "form cluster" command to all other nodes.
 /// TODO: use TLS
-pub fn start_discovery(listen_addr: SocketAddr, target_ids: Vec<PartyID>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+pub fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
     let mut out: HashMap<PartyID, TcpStream> = HashMap::new();
     let listener = TcpListener::bind(listen_addr)?;
     for stream_res in listener.incoming() {
         let mut stream = stream_res?;
-        info!("[{:?}] found peer {:?}", listener.local_addr(), stream.peer_addr());
+        info!("[{}] found peer {}", pp(&listener.local_addr()), pp(&stream.peer_addr()));
 
         let candidate_id = stream.read_u32::<LittleEndian>()?;
         if !out.contains_key(&candidate_id) && target_ids.contains(&candidate_id) {
             out.insert(candidate_id, stream);
         } else {
-            info!("[{:?}] shutting down bad peer with id {}", listener.local_addr(), candidate_id);
+            info!("[{}] shutting down bad peer with id {}", pp(&listener.local_addr()), candidate_id);
             stream.shutdown(Shutdown::Both)?;
         }
 
         if out.len() == target_ids.len() {
-            info!("[{:?}] all peers connected, sending 'form cluster' command", listener.local_addr());
+            info!("[{}] all peers connected, sending 'form cluster' command", pp(&listener.local_addr()));
             break;
         }
     }
 
     for stream in out.values_mut() {
-        // NOTE for now the 'form cluster' command is '42'
-        // and we expect an 'ACK'
-        stream.write_u8(42)?;
+        stream.write_u8(FORM_CLUSTER)?;
+    }
+
+    // and we expect an 'ACK'
+    for stream in out.values_mut() {
+        let x = stream.read_u8()?;
+        if x != FORM_CLUSTER_ACK {
+            error!("[{}] ACK is wrong from {}", pp(&listener.local_addr()), pp(&stream.peer_addr()))
+        }
     }
     info!("[{:?}] 'form cluster' message sent", listener.local_addr());
+    Ok(out)
+}
+
+/// Connect to the discovery and wait for the 'form cluster' message.
+/// Retruns a TcpStream that is connected to the synchronizer.
+pub fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io::Error> {
+    let mut stream = retry_connection(sync_addr, 1000, Duration::from_millis(500))?;
+    stream.write_u32::<LittleEndian>(my_id)?;
+    let signal = stream.read_u8()?;
+    if signal == FORM_CLUSTER {
+        stream.write_u8(FORM_CLUSTER_ACK)?;
+        Ok(stream)
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidData, "invalid 'form cluster' signal"))
+    }
+}
+
+/// Listen for new connections but do not accept until `wait_start` unblocks.
+/// Then, accept connections from IDs that are lower than `my_id`.
+/// Make TCP connections to IDs that are higher than mine.
+/// If there are none, do not make TCP connections.
+pub fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConfig>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+    // spawn a thread to accept valid connections
+    let all_ids: Vec<PartyID> = all_nodes.iter().map(|x| x.id).collect();
+    let ids_to_connect: Vec<PartyID> = all_ids.clone().into_iter().filter(|id| *id < my_id).collect();
+    let ids_to_receive: Vec<PartyID> = all_ids.clone().into_iter().filter(|id| *id > my_id).collect();
+    debug!("[{:?}] node {} waiting for ids {:?}", listener.local_addr(), my_id, ids_to_receive);
+    debug!("[{:?}] node {} connecting to ids {:?}", listener.local_addr(), my_id, ids_to_connect);
+
+    let handler = thread::spawn(move || {
+        let mut out: HashMap<PartyID, TcpStream> = HashMap::new();
+        if ids_to_receive.is_empty() {
+            return out;
+        }
+
+        for stream_res in listener.incoming() {
+            match stream_res {
+                Ok(mut stream) => {
+                    let candidate_id = stream.read_u32::<LittleEndian>().expect("cannot read u32");
+                    if ids_to_receive.contains(&candidate_id) && !out.contains_key(&candidate_id) {
+                        #[rustfmt::skip]
+                        debug!("[{}] received candidate {} from {}", 
+                               pp(&listener.local_addr()), candidate_id, pp(&stream.peer_addr()));
+                        out.insert(candidate_id, stream);
+                    } else {
+                        #[rustfmt::skip]
+                        error!("[{}] received invalid id {:?} from {}", 
+                               pp(&listener.local_addr()), candidate_id, pp(&stream.peer_addr()));
+                    }
+                }
+                Err(e) => {
+                    error!("[{}] connection issue: {:?}", pp(&listener.local_addr()), e);
+                }
+            }
+
+            if out.len() == ids_to_receive.len() {
+                info!("[{}] received all connections", pp(&listener.local_addr()));
+                break;
+            }
+        }
+        out
+    });
+
+    // make connections to the IDs that are higher than mine
+    let mut out: HashMap<PartyID, TcpStream> = HashMap::new();
+    for node in all_nodes {
+        if ids_to_connect.contains(&node.id) && !out.contains_key(&node.id) {
+            let mut stream = retry_connection(node.addr, 20, Duration::from_millis(200))?;
+            stream.write_u32::<LittleEndian>(my_id)?;
+            out.insert(node.id, stream);
+        }
+    }
+
+    // combine the two
+    let others = handler.join().expect("form cluster thread panicked");
+    out.extend(others);
+    std::assert_eq!(out.len(), all_nodes.len() - 1);
+    debug!("[xxxx:xxxx] {} cluster formation ok", my_id);
     Ok(out)
 }
 
@@ -122,7 +215,7 @@ where
             match f() {
                 Ok(()) => {}
                 Err(e) => {
-                    info!("[{:?}] read failed but probably not an issue: {:?}", reader.local_addr(), e);
+                    info!("[{}] read failed but probably not an issue: {:?}", pp(&reader.local_addr()), e);
                     // try to shutdown because the writer might've closed the stream too
                     try_shutdown(&reader);
                     break;
@@ -145,7 +238,7 @@ where
                     match writer.write_all(&data) {
                         Ok(()) => {},
                         Err(e) => {
-                            error!("[{:?}] write error: {:?}", writer.local_addr(), e);
+                            error!("[{}] write error: {:?}", pp(&writer.local_addr()), e);
                             try_shutdown(&writer);
                             break;
                         }
@@ -153,7 +246,7 @@ where
                 }
                 recv(shutdown_r) -> msg_res => {
                     msg_res.unwrap(); // TODO check unwrap
-                    info!("[{:?}] closing stream with peer {:?}", writer.local_addr(), writer.peer_addr());
+                    info!("[{}] closing stream with peer {}", pp(&writer.local_addr()), pp(&writer.peer_addr()));
                     // try to shutdown because the reader might've closed the stream too
                     try_shutdown(&writer);
                     break;
@@ -217,7 +310,7 @@ impl OnlineNode {
                     }
                 }
                 Err(e) => {
-                    error!("[{:?}] unable to get peer address: {:?}", stream.local_addr(), e);
+                    error!("[{}] unable to get peer address: {:?}", pp(&stream.local_addr()), e);
                     continue;
                 }
             };
@@ -276,6 +369,7 @@ pub fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> R
 #[cfg(test)]
 mod test {
     use super::*;
+    use crossbeam;
     use ron;
     use std::fs::read_to_string;
     use test_env_log::test;
@@ -339,7 +433,7 @@ mod test {
         assert_eq!(public_ron.sync_addr, "[::1]:12345".parse().unwrap());
         assert_eq!(public_ron.nodes.len(), 3);
         assert_eq!(public_ron.nodes[0].addr, "[::1]:14270".parse().unwrap());
-        assert_eq!(public_ron.nodes[0].pk, "");
+        assert_eq!(public_ron.nodes[0].id, 0);
         Ok(())
     }
 
@@ -375,7 +469,7 @@ mod test {
     fn test_discovery() -> Result<(), io::Error> {
         let listen_addr: SocketAddr = "[::1]:12345".parse().unwrap();
         let target_ids: Vec<PartyID> = vec![0, 1];
-        let handler = thread::spawn(move || start_discovery(listen_addr, target_ids));
+        let sync_handler = thread::spawn(move || start_discovery(listen_addr, &target_ids));
 
         let mut client_bad = retry_connection(listen_addr, 10, Duration::from_millis(100))?;
         client_bad.write_u32::<LittleEndian>(2)?;
@@ -389,10 +483,13 @@ mod test {
 
         let v0 = client0.read_u8()?;
         let v1 = client1.read_u8()?;
-        assert_eq!(42, v0);
-        assert_eq!(42, v1);
+        assert_eq!(FORM_CLUSTER, v0);
+        assert_eq!(FORM_CLUSTER, v1);
 
-        let mut res = handler.join().expect("discovery thread panicked")?;
+        client0.write_u8(FORM_CLUSTER_ACK)?;
+        client1.write_u8(FORM_CLUSTER_ACK)?;
+
+        let mut res = sync_handler.join().expect("discovery thread panicked")?;
         for stream in res.values_mut() {
             stream.write_u8(88)?;
         }
@@ -401,6 +498,69 @@ mod test {
         let w1 = client1.read_u8()?;
         assert_eq!(88, w0);
         assert_eq!(88, w1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_formation() -> Result<(), io::Error> {
+        #[rustfmt::skip]
+            let nodes = vec![
+            NodeConfig{ addr: "[::1]:9000".parse().unwrap(), id: 0 },
+            NodeConfig{ addr: "[::1]:9111".parse().unwrap(), id: 1 },
+            NodeConfig{ addr: "[::1]:9222".parse().unwrap(), id: 2 },
+        ];
+        let ids: Vec<PartyID> = nodes.clone().iter().map(|x| x.id).collect();
+
+        // NOTE socket address must not be reused in test otherwise it'll conflict with other tests
+        // since cargo test runs them in parallel
+        let sync_addr: SocketAddr = "[::1]:12347".parse().unwrap();
+        let synchronizer_handler = thread::spawn(move || start_discovery(sync_addr, &ids));
+
+        // use a waitgroup to wait for the synchronizer to announce 'form cluster'
+        let wg = crossbeam::sync::WaitGroup::new();
+        let mut listeners = vec![];
+        for node in &nodes {
+            listeners.push(TcpListener::bind(node.addr)?);
+            let wg = wg.clone();
+            let id = node.id;
+            let sync_addr = sync_addr.clone();
+            thread::spawn(move || {
+                let _ = wait_start(sync_addr, id).unwrap();
+                drop(wg);
+            });
+        }
+        wg.wait();
+
+        // the nodes start to form cluster
+        let mut handlers = vec![];
+        let nodes_copy = nodes.clone();
+        for (node, listener) in nodes.iter().zip(listeners) {
+            let id = node.id;
+            let nodes_copy = nodes_copy.clone(); // is there a way to avoid multiple clone?
+            let h = thread::spawn(move || form_cluster(listener, id, &nodes_copy).expect("form cluster thread panicked"));
+            handlers.push(h);
+        }
+
+        let mut stream_maps = Vec::new();
+        for h in handlers {
+            let stream_map = h.join().unwrap();
+            stream_maps.push(stream_map);
+        }
+        let _ = synchronizer_handler.join().expect("synchronizer thread panicked");
+
+        // sending a message from one node should be received by another
+        let x = 66u8;
+        stream_maps.get_mut(0).unwrap().get_mut(&1).unwrap().write_u8(x)?;
+        let xx = stream_maps.get_mut(1).unwrap().get_mut(&0).unwrap().read_u8()?;
+        assert_eq!(x, xx);
+
+        let y = 77u8;
+        stream_maps.get_mut(1).unwrap().get_mut(&2).unwrap().write_u8(y)?;
+        let yy = stream_maps.get_mut(2).unwrap().get_mut(&1).unwrap().read_u8()?;
+        assert_eq!(y, yy);
+
+        // the synchronizer should not be listening anymore
+        TcpStream::connect(sync_addr).expect_err("synchronizer should not be listening");
         Ok(())
     }
 }
