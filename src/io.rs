@@ -23,41 +23,80 @@ const FORM_CLUSTER: u8 = 42;
 const FORM_CLUSTER_ACK: u8 = 41;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct NodeConfig {
+pub struct NodeConf {
     pub addr: SocketAddr,
     pub id: PartyID,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PublicConfig {
+pub struct PublicConf {
     pub sync_addr: SocketAddr,
-    pub nodes: Vec<NodeConfig>,
+    pub nodes: Vec<NodeConf>,
 }
 
-impl PublicConfig {
+impl PublicConf {
     pub fn arg_name() -> &'static str {
         "PUBLIC_CONFIG"
     }
 
-    pub fn from_file(f: &str) -> Result<PublicConfig, io::Error> {
+    pub fn from_file(f: &str) -> Result<PublicConf, io::Error> {
         let s = read_to_string(f)?;
         ron::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PrivateConfig {
+pub struct PrivateConf {
     pub id: PartyID,
     pub listen_addr: SocketAddr,
+    #[serde(with = "fp_serde")]
     pub alpha_share: Fp,
 }
 
-impl PrivateConfig {
+mod fp_serde {
+    use crate::algebra::Fp;
+
+    use serde::{de, de::Visitor, Deserializer, Serializer};
+    use std::fmt;
+    use std::str::FromStr;
+
+    pub(crate) fn serialize<S>(fp: &Fp, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_str(&fp.to_string())
+    }
+
+    struct FpVisitor;
+    impl<'de> Visitor<'de> for FpVisitor {
+        type Value = Fp;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a field element")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Fp::from_str(v).map_err(|e| de::Error::custom(e))
+        }
+    }
+
+    pub(crate) fn deserialize<'de, D>(d: D) -> Result<Fp, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        d.deserialize_str(FpVisitor)
+    }
+}
+
+impl PrivateConf {
     pub fn arg_name() -> &'static str {
         "PRIVATE_CONFIG"
     }
 
-    pub fn from_file(f: &str) -> Result<PrivateConfig, io::Error> {
+    pub fn from_file(f: &str) -> Result<PrivateConf, io::Error> {
         let s = read_to_string(f)?;
         ron::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
@@ -153,7 +192,7 @@ fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io::Er
 /// Then, accept connections from IDs that are lower than `my_id`.
 /// Make TCP connections to IDs that are higher than mine.
 /// If there are none, do not make TCP connections.
-fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConfig>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
+fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConf>) -> Result<HashMap<PartyID, TcpStream>, io::Error> {
     // spawn a thread to accept valid connections
     let all_ids: Vec<PartyID> = all_nodes.iter().map(|x| x.id).collect();
     let ids_to_connect: Vec<PartyID> = all_ids.clone().into_iter().filter(|id| *id < my_id).collect();
@@ -310,9 +349,9 @@ fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> Resul
     Err(last_error)
 }
 
-pub fn synchronizer_main(public_ron: PublicConfig, synchronizer_ron: SynchronizerConfig) -> Result<(), ApplicationError> {
-    let ids: Vec<PartyID> = public_ron.nodes.clone().iter().map(|x| x.id).collect();
-    let stream_map = start_discovery(synchronizer_ron.listen_addr, &ids)?;
+pub fn synchronizer_main(public_conf: PublicConf, synchronizer_conf: SynchronizerConfig) -> Result<(), ApplicationError> {
+    let ids: Vec<PartyID> = public_conf.nodes.clone().iter().map(|x| x.id).collect();
+    let stream_map = start_discovery(synchronizer_conf.listen_addr, &ids)?;
 
     let mut peer_handlers = vec![];
     let mut peer_sender_chans = vec![];
@@ -335,12 +374,12 @@ pub fn synchronizer_main(public_ron: PublicConfig, synchronizer_ron: Synchronize
     Ok(())
 }
 
-pub fn online_node_main(public_ron: PublicConfig, private_ron: PrivateConfig) -> Result<(), ApplicationError> {
-    let listener = TcpListener::bind(private_ron.listen_addr)?;
-    let sync_stream = wait_start(public_ron.sync_addr, private_ron.id)?;
+pub fn online_node_main(public_conf: PublicConf, private_conf: PrivateConf) -> Result<(), ApplicationError> {
+    let listener = TcpListener::bind(private_conf.listen_addr)?;
+    let sync_stream = wait_start(public_conf.sync_addr, private_conf.id)?;
     let (sync_s, sync_r, sync_shutdown, sync_h) = wrap_tcpstream::<SyncReplyMsg, SyncMsg>(sync_stream);
 
-    let stream_map = form_cluster(listener, private_ron.id, &public_ron.nodes)?;
+    let stream_map = form_cluster(listener, private_conf.id, &public_conf.nodes)?;
 
     let mut peer_handlers = vec![];
     let mut peer_sender_chans = vec![];
@@ -355,7 +394,7 @@ pub fn online_node_main(public_ron: PublicConfig, private_ron: PrivateConfig) ->
         peer_handlers.push(h);
     }
 
-    // let party_handle = Party::spawn(private_ron.id, private_ron.alpha_share.clone(), )
+    // let party_handle = Party::spawn(private_conf.id, private_conf.alpha_share.clone(), )
     // TODO
 
     Ok(())
@@ -421,43 +460,46 @@ mod test {
     }
 
     #[test]
-    fn test_public_ron() -> Result<(), io::Error> {
-        let ron_str = read_to_string("config/public.ron")?;
-        let public_ron: PublicConfig = ron::from_str(&ron_str).unwrap();
-        assert_eq!(public_ron.sync_addr, "[::1]:12345".parse().unwrap());
-        assert_eq!(public_ron.nodes.len(), 3);
-        assert_eq!(public_ron.nodes[0].addr, "[::1]:14270".parse().unwrap());
-        assert_eq!(public_ron.nodes[0].id, 0);
+    fn test_public_conf() -> Result<(), io::Error> {
+        let ron_str = read_to_string("conf/public.ron")?;
+        let public_conf: PublicConf = ron::from_str(&ron_str).unwrap();
+        assert_eq!(public_conf.sync_addr, "[::1]:12345".parse().unwrap());
+        assert_eq!(public_conf.nodes.len(), 3);
+        assert_eq!(public_conf.nodes[0].addr, "[::1]:14270".parse().unwrap());
+        assert_eq!(public_conf.nodes[0].id, 0);
         Ok(())
     }
 
     #[test]
-    fn test_synchronizer_ron() -> Result<(), io::Error> {
-        let ron_str = read_to_string("config/synchronizer.ron")?;
-        let public_ron: SynchronizerConfig = ron::from_str(&ron_str).unwrap();
-        assert_eq!(public_ron.listen_addr, "[::1]:12345".parse().unwrap());
+    fn test_synchronizer_conf() -> Result<(), io::Error> {
+        let ron_str = read_to_string("conf/synchronizer.ron")?;
+        let public_conf: SynchronizerConfig = ron::from_str(&ron_str).unwrap();
+        assert_eq!(public_conf.listen_addr, "[::1]:12345".parse().unwrap());
         Ok(())
     }
 
     #[test]
-    fn test_private_ron() -> Result<(), io::Error> {
+    fn test_private_conf() -> Result<(), io::Error> {
         {
-            let ron_str = read_to_string("config/private_0.ron")?;
-            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
-            assert_eq!(private_ron.id, 0);
-            assert_eq!(private_ron.listen_addr, "[::1]:14270".parse().unwrap());
+            let ron_str = read_to_string("conf/private_0.ron")?;
+            let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_conf.id, 0);
+            assert_eq!(private_conf.listen_addr, "[::1]:14270".parse().unwrap());
+            assert_eq!(private_conf.alpha_share.to_string(), "pv///1kAAABaqJMA8lZUjyAOGp0sDar9nfShXsMscz4=");
         }
         {
-            let ron_str = read_to_string("config/private_1.ron")?;
-            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
-            assert_eq!(private_ron.id, 1);
-            assert_eq!(private_ron.listen_addr, "[::1]:14271".parse().unwrap());
+            let ron_str = read_to_string("conf/private_1.ron")?;
+            let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_conf.id, 1);
+            assert_eq!(private_conf.listen_addr, "[::1]:14271".parse().unwrap());
+            assert_eq!(private_conf.alpha_share.to_string(), "ngS++JPaVER19LutvDJ9jvbvY2jAD3034Ql2d4InXz8=");
         }
         {
-            let ron_str = read_to_string("config/private_2.ron")?;
-            let private_ron: PrivateConfig = ron::from_str(&ron_str).unwrap();
-            assert_eq!(private_ron.id, 2);
-            assert_eq!(private_ron.listen_addr, "[::1]:14272".parse().unwrap());
+            let ron_str = read_to_string("conf/private_2.ron")?;
+            let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
+            assert_eq!(private_conf.id, 2);
+            assert_eq!(private_conf.listen_addr, "[::1]:14272".parse().unwrap());
+            assert_eq!(private_conf.alpha_share.to_string(), "3gvur5vUxXSXFe+R0cd8QWhmN6rUMgDhIPWmvXnU714=");
         }
         Ok(())
     }
@@ -502,9 +544,9 @@ mod test {
     fn test_cluster_formation() -> Result<(), io::Error> {
         #[rustfmt::skip]
             let nodes = vec![
-            NodeConfig{ addr: "[::1]:9000".parse().unwrap(), id: 0 },
-            NodeConfig{ addr: "[::1]:9111".parse().unwrap(), id: 1 },
-            NodeConfig{ addr: "[::1]:9222".parse().unwrap(), id: 2 },
+            NodeConf { addr: "[::1]:9000".parse().unwrap(), id: 0 },
+            NodeConf { addr: "[::1]:9111".parse().unwrap(), id: 1 },
+            NodeConf { addr: "[::1]:9222".parse().unwrap(), id: 2 },
         ];
         let ids: Vec<PartyID> = nodes.clone().iter().map(|x| x.id).collect();
 

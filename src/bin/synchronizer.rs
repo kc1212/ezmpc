@@ -8,7 +8,7 @@ fn main() -> Result<(), ezmpc::error::ApplicationError> {
 
     #[rustfmt::skip]
         let matches = App::new("ezmpc synchronizer")
-        .arg(Arg::new(io::PublicConfig::arg_name())
+        .arg(Arg::new(io::PublicConf::arg_name())
             .about("Set the public .ron file")
             .required(true)
             .index(1))
@@ -18,8 +18,8 @@ fn main() -> Result<(), ezmpc::error::ApplicationError> {
             .index(2))
         .get_matches();
 
-    let public_f = matches.value_of(io::PublicConfig::arg_name()).expect("public .ron file is required");
-    let public_ron = io::PublicConfig::from_file(public_f)?;
+    let public_f = matches.value_of(io::PublicConf::arg_name()).expect("public .ron file is required");
+    let public_ron = io::PublicConf::from_file(public_f)?;
 
     let synchronizer_f = matches
         .value_of(io::SynchronizerConfig::arg_name())

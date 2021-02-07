@@ -1,16 +1,21 @@
 use auto_ops::*;
+use base64;
 use ff::*;
 use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::mem::transmute;
 use std::ops::*;
+use std::str::FromStr;
 
 #[derive(PrimeField, Serialize, Deserialize)]
 #[PrimeFieldModulus = "52435875175126190479447740508185965837690552500527637822603658699938581184513"]
 #[PrimeFieldGenerator = "7"]
 #[PrimeFieldReprEndianness = "little"]
 struct InnerFp([u64; 4]);
+const LIMB_SIZE: usize = 4;
+const FP_BYTES: usize = 64 * LIMB_SIZE / 8;
 
 /// Fp is a prime field element.
 /// It is a wrapper type around the type generate by the `ff` crate
@@ -134,6 +139,41 @@ impl From<usize> for Fp {
     }
 }
 
+fn to_vec_u8(fp: &Fp) -> Vec<u8> {
+    let mut out = vec![];
+    out.reserve_exact(FP_BYTES);
+    for i in 0..LIMB_SIZE {
+        unsafe {
+            out.extend_from_slice(&transmute::<u64, [u8; 8]>(fp.0 .0[i]));
+        }
+    }
+    out
+}
+
+fn from_vec_u8(v: &Vec<u8>) -> Result<Fp, base64::DecodeError> {
+    let mut out = [0u64; LIMB_SIZE];
+    for i in 0..LIMB_SIZE {
+        let mut u64_bytes = [0u8; 8];
+        u64_bytes.copy_from_slice(&v[i * 8..(i + 1) * 8]);
+        out[i] = u64::from_le_bytes(u64_bytes);
+    }
+    Ok(Fp(InnerFp(out)))
+}
+
+impl ToString for Fp {
+    fn to_string(&self) -> String {
+        base64::encode(to_vec_u8(self))
+    }
+}
+
+impl FromStr for Fp {
+    type Err = base64::DecodeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(from_vec_u8(&base64::decode(s)?)?)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -144,5 +184,15 @@ mod test {
         // consider using serde_test crate
         let buf = bincode::serialize(&x).unwrap();
         x == bincode::deserialize(&buf).unwrap()
+    }
+
+    #[quickcheck]
+    fn prop_string(x: Fp) -> bool {
+        Fp::from_str(&x.to_string()).unwrap() == x
+    }
+
+    #[quickcheck]
+    fn prop_limb_size(x: Fp) -> bool {
+        x.0 .0.len() == LIMB_SIZE
     }
 }
