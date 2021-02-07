@@ -137,9 +137,6 @@ pub fn gen_fake_prep(
                     party_id: clear_id as PartyID,
                 })
                 .collect();
-            // for (i, (s, _)) in preproc_chans.iter().enumerate() {
-            //     s.send(rand_shares[i].clone()).unwrap();
-            // }
             rand_share_out.push(rand_shares);
         }
     }

@@ -4,6 +4,7 @@ use crate::algebra::Fp;
 use crate::message;
 use crate::vm;
 
+use bincode;
 use crossbeam::channel;
 use ron;
 use std::fmt;
@@ -69,6 +70,8 @@ pub enum ApplicationError {
     IOError(#[from] std::io::Error),
     #[error(transparent)]
     RonError(#[from] ron::Error),
+    #[error(transparent)]
+    BincodeError(#[from] Box<bincode::ErrorKind>),
     #[error(transparent)]
     MPCError(#[from] MPCError),
 }

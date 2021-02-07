@@ -5,6 +5,7 @@ use num_traits::{One, Zero};
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::mem::transmute;
 use std::ops::*;
 use std::str::FromStr;
@@ -20,7 +21,7 @@ const FP_BYTES: usize = 64 * LIMB_SIZE / 8;
 /// Fp is a prime field element.
 /// It is a wrapper type around the type generate by the `ff` crate
 /// because we want to implement our own operators.
-#[derive(Deserialize, Serialize, Clone, Eq, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Fp(InnerFp);
 
 impl Fp {
@@ -171,6 +172,13 @@ impl FromStr for Fp {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(from_vec_u8(&base64::decode(s)?)?)
+    }
+}
+
+impl fmt::Debug for Fp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // TODO is there a way to remove the extra copying?
+        f.write_str(&self.to_string())
     }
 }
 

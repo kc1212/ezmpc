@@ -2,6 +2,9 @@ use bincode;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{debug, error, info};
+use num_traits::Zero;
+use rand::{thread_rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::read_to_string;
@@ -13,12 +16,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::algebra::Fp;
+use crate::crypto::gen_fake_prep;
 use crate::error::ApplicationError;
 use crate::message::*;
 use crate::synchronizer;
 
 const TCPSTREAM_CAP: usize = 1000;
-const LENGTH_BYTES: usize = 8;
 const FORM_CLUSTER: u8 = 42;
 const FORM_CLUSTER_ACK: u8 = 41;
 
@@ -145,7 +148,7 @@ fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Result
         let mut stream = stream_res?;
         info!("[{}] found peer {}", pp(&listener.local_addr()), pp(&stream.peer_addr()));
 
-        let candidate_id = stream.read_u32::<LittleEndian>()?;
+        let candidate_id = read_party_id(&mut stream)?;
         if !out.contains_key(&candidate_id) && target_ids.contains(&candidate_id) {
             out.insert(candidate_id, stream);
         } else {
@@ -178,7 +181,7 @@ fn start_discovery(listen_addr: SocketAddr, target_ids: &Vec<PartyID>) -> Result
 /// Retruns a TcpStream that is connected to the synchronizer.
 fn wait_start(sync_addr: SocketAddr, my_id: PartyID) -> Result<TcpStream, io::Error> {
     let mut stream = retry_connection(sync_addr, 1000, Duration::from_millis(500))?;
-    stream.write_u32::<LittleEndian>(my_id)?;
+    write_party_id(&mut stream, my_id)?;
     let signal = stream.read_u8()?;
     if signal == FORM_CLUSTER {
         stream.write_u8(FORM_CLUSTER_ACK)?;
@@ -209,7 +212,7 @@ fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConf>
         for stream_res in listener.incoming() {
             match stream_res {
                 Ok(mut stream) => {
-                    let candidate_id = stream.read_u32::<LittleEndian>().expect("cannot read u32");
+                    let candidate_id = read_party_id(&mut stream).expect("cannot read u32");
                     if ids_to_receive.contains(&candidate_id) && !out.contains_key(&candidate_id) {
                         #[rustfmt::skip]
                         debug!("[{}] received candidate {} from {}", 
@@ -239,7 +242,7 @@ fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConf>
     for node in all_nodes {
         if ids_to_connect.contains(&node.id) && !out.contains_key(&node.id) {
             let mut stream = retry_connection(node.addr, 20, Duration::from_millis(200))?;
-            stream.write_u32::<LittleEndian>(my_id)?;
+            write_party_id(&mut stream, my_id)?;
             out.insert(node.id, stream);
         }
     }
@@ -250,6 +253,22 @@ fn form_cluster(listener: TcpListener, my_id: PartyID, all_nodes: &Vec<NodeConf>
     std::assert_eq!(out.len(), all_nodes.len() - 1);
     debug!("[xxxx:xxxx] {} cluster formation ok", my_id);
     Ok(out)
+}
+
+fn read_length<R: io::Read>(reader: &mut R) -> io::Result<usize> {
+    reader.read_u64::<LittleEndian>().map(|x| x as usize)
+}
+
+fn read_party_id<R: io::Read>(reader: &mut R) -> io::Result<PartyID> {
+    reader.read_u32::<LittleEndian>().map(|x| x as PartyID)
+}
+
+fn write_length<W: io::Write>(writer: &mut W, len: usize) -> io::Result<()> {
+    writer.write_u64::<LittleEndian>(len as u64)
+}
+
+fn write_party_id<W: io::Write>(writer: &mut W, id: PartyID) -> io::Result<()> {
+    writer.write_u32::<LittleEndian>(id)
 }
 
 /// Wrap a TcpStream into channels
@@ -268,10 +287,7 @@ where
         // read data from a stream and then forward it to a channel
         let read_hdl = thread::spawn(move || loop {
             let mut f = || -> Result<(), std::io::Error> {
-                let mut length_buf = [0u8; LENGTH_BYTES];
-                reader.read_exact(&mut length_buf)?;
-
-                let n = usize::from_le_bytes(length_buf);
+                let n = read_length(&mut reader)?;
                 let mut value_buf = vec![0u8; n];
                 reader.read_exact(&mut value_buf)?;
 
@@ -302,14 +318,15 @@ where
             select! {
                 recv(writer_r) -> msg_res => {
                     let msg = msg_res.unwrap(); // TODO check unwrap
-                    // construct a header with the length and concat it with the body
-                    let mut data = bincode::serialized_size(&msg)
-                        .expect("failed to find serialized size")
-                        .to_le_bytes()
-                        .to_vec();
-                    // we use expect here because we cannot recover from serialization failure
-                    data.extend(bincode::serialize(&msg).expect("serialization failed"));
-                    match writer.write_all(&data) {
+                    let data = bincode::serialize(&msg).expect("serialization failed");
+
+                    let mut f = || -> io::Result<()> {
+                        write_length(&mut writer, data.len())?;
+                        (&mut writer).write_all(&data)?;
+                        Ok(())
+                    };
+
+                    match f() {
                         Ok(()) => {},
                         Err(e) => {
                             error!("[{}] write error: {:?}", pp(&writer.local_addr()), e);
@@ -401,8 +418,59 @@ pub fn online_node_main(public_conf: PublicConf, private_conf: PrivateConf) -> R
 }
 
 /// Wait for the command from the synchronizer and then start.
-pub fn fake_prep_main(public_conf: PublicConf, private_confs: Vec<PrivateConf>) -> Result<(), ApplicationError> {
-    unimplemented!()
+pub fn fake_prep_main(
+    listen_addr: SocketAddr,
+    private_confs: Vec<PrivateConf>,
+    rand_count_per_party: usize,
+    triple_count: usize,
+) -> Result<(), ApplicationError> {
+    let mut alpha = Fp::zero();
+    for conf in &private_confs {
+        alpha += &conf.alpha_share;
+    }
+
+    let mut rng = ChaCha20Rng::from_rng(thread_rng()).expect("could not initialize chacha20 rng");
+    let n = private_confs.len();
+    let (rand_shares, triples) = gen_fake_prep(n, &alpha, rand_count_per_party, triple_count, &mut rng);
+
+    // listen and then wait for all nodes to join
+    let ids: Vec<PartyID> = private_confs.clone().iter().map(|x| x.id).collect();
+    let mut stream_map: HashMap<PartyID, TcpStream> = HashMap::new();
+    let listener = TcpListener::bind(listen_addr)?;
+    for stream_res in listener.incoming() {
+        let mut stream = stream_res?;
+        let candidate_id = read_party_id(&mut stream)?;
+        if ids.contains(&candidate_id) && !stream_map.contains_key(&candidate_id) {
+            info!("[{}] fake prep found party {}", pp(&listener.local_addr()), candidate_id);
+            stream_map.insert(candidate_id, stream);
+        }
+
+        if ids.len() == stream_map.len() {
+            break;
+        }
+    }
+
+    let mut stream_vec: Vec<(PartyID, TcpStream)> = stream_map.into_iter().collect();
+    stream_vec.sort_by_key(|x| x.0);
+    // send the rand share
+    for ss in rand_shares {
+        assert_eq!(ss.len(), stream_vec.len());
+        for ((_, stream), s) in stream_vec.iter_mut().zip(ss) {
+            let buf = bincode::serialize(&PreprocMsg::RandShare(s)).expect("cannot serialize using bincode");
+            write_length(stream, buf.len())?;
+            stream.write_all(&buf)?;
+        }
+    }
+    // send the triples
+    for ss in triples {
+        assert_eq!(ss.len(), stream_vec.len());
+        for ((_, stream), s) in stream_vec.iter_mut().zip(ss) {
+            let buf = bincode::serialize(&PreprocMsg::Triple(s)).expect("cannot serialize using bincode");
+            write_length(stream, buf.len())?;
+            stream.write_all(&buf)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -436,10 +504,7 @@ mod test {
             stream.write_all(&msg1_buf).unwrap();
 
             // read a message
-            let mut read_len_buf = [0u8; LENGTH_BYTES];
-            stream.read_exact(&mut read_len_buf).unwrap();
-            let read_len = usize::from_le_bytes(read_len_buf);
-
+            let read_len = read_length(&mut stream).unwrap();
             let mut read_buf = vec![0u8; read_len];
             stream.read_exact(&mut read_buf).unwrap();
             s.send(()).unwrap();
@@ -516,14 +581,14 @@ mod test {
         let sync_handler = thread::spawn(move || start_discovery(listen_addr, &target_ids));
 
         let mut client_bad = retry_connection(listen_addr, 10, Duration::from_millis(100))?;
-        client_bad.write_u32::<LittleEndian>(2)?;
+        write_party_id(&mut client_bad, 2)?;
         client_bad.read_u8().expect_err("remote should close connection with bad party ID");
 
         let mut client0 = TcpStream::connect(listen_addr)?;
         let mut client1 = TcpStream::connect(listen_addr)?;
 
-        client0.write_u32::<LittleEndian>(0)?;
-        client1.write_u32::<LittleEndian>(1)?;
+        write_party_id(&mut client0, 0)?;
+        write_party_id(&mut client1, 1)?;
 
         let v0 = client0.read_u8()?;
         let v1 = client1.read_u8()?;
@@ -606,5 +671,45 @@ mod test {
         // the synchronizer should not be listening anymore
         TcpStream::connect(sync_addr).expect_err("synchronizer should not be listening");
         Ok(())
+    }
+
+    #[test]
+    fn test_fake_prep() -> Result<(), ApplicationError> {
+        let rand_count_per_party = 1;
+        let triple_count = 2;
+
+        let listen_addr = "127.0.0.1:26889".parse().unwrap();
+        let ron_str = read_to_string("conf/private_0.ron")?;
+        let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
+        let my_id = private_conf.id;
+
+        let handler = thread::spawn(move || fake_prep_main(listen_addr, vec![private_conf], rand_count_per_party, triple_count));
+
+        let mut prep_stream = retry_connection(listen_addr, 20, Duration::from_millis(200))?;
+        write_party_id(&mut prep_stream, my_id)?;
+
+        for _i in 0..rand_count_per_party {
+            let len = read_length(&mut prep_stream)?;
+            let mut buf = vec![0u8; len];
+            prep_stream.read_exact(&mut buf)?;
+            let received_rand_share: PreprocMsg = bincode::deserialize(&buf)?;
+            match received_rand_share {
+                PreprocMsg::Triple(_) => assert!(false, "expected random share"),
+                PreprocMsg::RandShare(_) => {}
+            }
+        }
+
+        for _i in 0..triple_count {
+            let len = read_length(&mut prep_stream)?;
+            let mut buf = vec![0u8; len];
+            prep_stream.read_exact(&mut buf)?;
+            let received_triple: PreprocMsg = bincode::deserialize(&buf)?;
+            match received_triple {
+                PreprocMsg::Triple(_) => {}
+                PreprocMsg::RandShare(_) => assert!(false, "expected triple"),
+            }
+        }
+
+        handler.join().unwrap()
     }
 }
