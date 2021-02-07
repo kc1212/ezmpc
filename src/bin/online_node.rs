@@ -2,7 +2,6 @@ use ezmpc::io;
 
 use clap::{App, Arg};
 use env_logger;
-use ezmpc::party::Party;
 
 fn main() -> Result<(), ezmpc::error::ApplicationError> {
     env_logger::init();

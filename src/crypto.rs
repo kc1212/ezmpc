@@ -1,8 +1,10 @@
 //! This module contains our cryptographic primitives.
 
 use crate::algebra::Fp;
+use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
 use auto_ops::*;
+use itertools::multizip;
 use num_traits::Zero;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -109,6 +111,52 @@ pub fn auth_triple(n: usize, alpha: &Fp, rng: &mut impl Rng) -> (Vec<AuthShare>,
         auth_share(&b, n, alpha, rng),
         auth_share(&c, n, alpha, rng),
     )
+}
+
+// The first dimension should be the number of preprocessing elements,
+// the second dimension should be the party size.
+pub fn gen_fake_prep(
+    n: usize,
+    alpha: &Fp,
+    rand_count_per_party: usize,
+    triple_count: usize,
+    rng: &mut impl Rng,
+) -> (Vec<Vec<RandShareMsg>>, Vec<Vec<TripleMsg>>) {
+    // write the random shares
+    let mut rand_share_out = Vec::new();
+    for clear_id in 0..n {
+        for _ in 0..rand_count_per_party {
+            let r: Fp = Fp::random(rng);
+            let auth_shares = auth_share(&r, n, &alpha, rng);
+            let rand_shares: Vec<_> = auth_shares
+                .iter()
+                .enumerate()
+                .map(|(i, share)| RandShareMsg {
+                    share: share.clone(),
+                    clear: if clear_id == i { Some(r.clone()) } else { None },
+                    party_id: clear_id as PartyID,
+                })
+                .collect();
+            // for (i, (s, _)) in preproc_chans.iter().enumerate() {
+            //     s.send(rand_shares[i].clone()).unwrap();
+            // }
+            rand_share_out.push(rand_shares);
+        }
+    }
+
+    // write the triples
+    let mut triple_out = Vec::new();
+    for _ in 0..triple_count {
+        let (triple_a, triple_b, triple_c) = auth_triple(n, &alpha, rng);
+        let mut tmp = Vec::new();
+        tmp.reserve_exact(n);
+        for (a, b, c) in multizip((triple_a, triple_b, triple_c)) {
+            tmp.push(TripleMsg { a, b, c });
+        }
+        triple_out.push(tmp);
+    }
+
+    (rand_share_out, triple_out)
 }
 
 pub mod commit {

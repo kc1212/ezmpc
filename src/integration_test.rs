@@ -1,5 +1,4 @@
 use crossbeam::channel::{bounded, Receiver, Sender};
-use log::debug;
 use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -151,35 +150,17 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
     let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
     let preproc_chans = create_chans::<PreprocMsg>(n, triple_count + max_rand_count * n);
+    let (rand_shares, triples) = gen_fake_prep(n, &alpha, max_rand_count, triple_count, rng);
 
-    // write the random shares
-    debug!("sending {} rand shares", max_rand_count * n);
-    for clear_id in 0..n {
-        for _ in 0..max_rand_count {
-            let r: Fp = Fp::random(rng);
-            let auth_shares = auth_share(&r, n, &alpha, rng);
-            let rand_shares: Vec<_> = auth_shares
-                .iter()
-                .enumerate()
-                .map(|(i, share)| PreprocMsg::new_rand_share(share.clone(), if clear_id == i { Some(r.clone()) } else { None }, clear_id as PartyID))
-                .collect();
-            for (i, (s, _)) in preproc_chans.iter().enumerate() {
-                s.send(rand_shares[i].clone()).unwrap();
-            }
+    for ss in rand_shares {
+        for ((chan, _), s) in preproc_chans.iter().zip(ss) {
+            chan.send(PreprocMsg::RandShare(s)).unwrap();
         }
     }
 
-    // write the triples
-    debug!("sending {} triples", triple_count);
-    for _ in 0..triple_count {
-        let (triple_a, triple_b, triple_c) = auth_triple(n, &alpha, rng);
-        for (i, (s, _)) in preproc_chans.iter().enumerate() {
-            s.send(PreprocMsg::new_triple(
-                triple_a[i].to_owned(),
-                triple_b[i].to_owned(),
-                triple_c[i].to_owned(),
-            ))
-            .unwrap();
+    for ss in triples {
+        for ((chan, _), s) in preproc_chans.iter().zip(ss) {
+            chan.send(PreprocMsg::Triple(s)).unwrap();
         }
     }
 

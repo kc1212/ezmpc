@@ -400,6 +400,11 @@ pub fn online_node_main(public_conf: PublicConf, private_conf: PrivateConf) -> R
     Ok(())
 }
 
+/// Wait for the command from the synchronizer and then start.
+pub fn fake_prep_main(public_conf: PublicConf, private_confs: Vec<PrivateConf>) -> Result<(), ApplicationError> {
+    unimplemented!()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
