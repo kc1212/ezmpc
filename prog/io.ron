@@ -1,0 +1,9 @@
+[
+    Input(0, 0, 0),
+    Input(1, 1, 1),
+    Input(2, 2, 2),
+    COutput(0),
+    COutput(1),
+    SOutput(2),
+    Stop,
+]

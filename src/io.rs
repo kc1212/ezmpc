@@ -3,7 +3,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use log::{debug, error, info};
 use num_traits::Zero;
-use rand::{thread_rng, SeedableRng};
+use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,7 +19,10 @@ use crate::algebra::Fp;
 use crate::crypto::gen_fake_prep;
 use crate::error::ApplicationError;
 use crate::message::*;
+use crate::party::Party;
 use crate::synchronizer;
+use crate::vm;
+use std::str::FromStr;
 
 const TCPSTREAM_CAP: usize = 1000;
 const FORM_CLUSTER: u8 = 42;
@@ -367,6 +370,20 @@ fn retry_connection(addr: SocketAddr, tries: usize, interval: Duration) -> Resul
     Err(last_error)
 }
 
+pub fn read_prog(fname: &str) -> Result<Vec<vm::Instruction>, ApplicationError> {
+    let s = read_to_string(fname)?;
+    let out = ron::from_str(&s)?;
+    Ok(out)
+}
+
+pub fn create_register(id: PartyID, prog: &Vec<vm::Instruction>, inputs: Vec<&str>) -> Result<vm::Reg, ApplicationError> {
+    let mut fp_inputs = Vec::new();
+    for s in inputs {
+        fp_inputs.push(Fp::from_str(s)?);
+    }
+    vm::Reg::from_prog(id, prog, fp_inputs).map_err(|e| e.into())
+}
+
 pub fn synchronizer_main(public_conf: PublicConf, synchronizer_conf: SynchronizerConfig) -> Result<(), ApplicationError> {
     let ids: Vec<PartyID> = public_conf.nodes.clone().iter().map(|x| x.id).collect();
     let stream_map = start_discovery(synchronizer_conf.listen_addr, &ids)?;
@@ -386,13 +403,22 @@ pub fn synchronizer_main(public_conf: PublicConf, synchronizer_conf: Synchronize
 
     let sync_handle = synchronizer::Synchronizer::spawn(peer_sender_chans, peer_receiver_chans);
     sync_handle.join().expect("synchronizer thread panicked")?;
+    for chan in peer_shutdown_chans {
+        chan.send(())?;
+    }
     for h in peer_handlers {
         h.join().unwrap();
     }
     Ok(())
 }
 
-pub fn online_node_main(public_conf: PublicConf, private_conf: PrivateConf) -> Result<(), ApplicationError> {
+pub fn online_node_main(
+    public_conf: PublicConf,
+    private_conf: PrivateConf,
+    reg: vm::Reg,
+    prog: Vec<vm::Instruction>,
+    seed: Option<[u8; 32]>,
+) -> Result<Vec<Fp>, ApplicationError> {
     let listener = TcpListener::bind(private_conf.listen_addr)?;
     let sync_stream = wait_start(public_conf.sync_addr, private_conf.id)?;
     let (sync_s, sync_r, sync_shutdown, sync_h) = wrap_tcpstream::<SyncReplyMsg, SyncMsg>(sync_stream);
@@ -412,10 +438,40 @@ pub fn online_node_main(public_conf: PublicConf, private_conf: PrivateConf) -> R
         peer_handlers.push(h);
     }
 
-    // let party_handle = Party::spawn(private_conf.id, private_conf.alpha_share.clone(), )
-    // TODO
+    let mut prep_stream = TcpStream::connect(private_conf.prep_addr)?;
+    write_party_id(&mut prep_stream, private_conf.id)?;
+    let (_prep_s, prep_r, prep_shutdown, prep_h) = wrap_tcpstream::<PrepMsg, PrepMsg>(prep_stream);
 
-    Ok(())
+    let party_handle = Party::spawn(
+        private_conf.id,
+        private_conf.alpha_share.clone(),
+        reg,
+        prog,
+        sync_s,
+        sync_r,
+        prep_r,
+        peer_sender_chans,
+        peer_receiver_chans,
+        seed,
+    );
+
+    // shutdown the parties
+    let res = party_handle.join().expect("party thread panicked")?;
+    for chan in peer_shutdown_chans {
+        chan.send(())?;
+    }
+    for h in peer_handlers {
+        h.join().unwrap();
+    }
+
+    // shutdown the prep
+    prep_shutdown.send(())?;
+    prep_h.join().expect("prep thread panicked");
+
+    // shutdown the sync
+    sync_shutdown.send(())?;
+    sync_h.join().expect("synchronizer thread panicked");
+    Ok(res)
 }
 
 /// Wait for the command from the synchronizer and then start.
@@ -430,7 +486,7 @@ pub fn fake_prep_main(
         alpha += &conf.alpha_share;
     }
 
-    let mut rng = ChaCha20Rng::from_rng(thread_rng()).expect("could not initialize chacha20 rng");
+    let mut rng = ChaCha20Rng::from_entropy();
     let n = private_confs.len();
     let (rand_shares, triples) = gen_fake_prep(n, &alpha, rand_count_per_party, triple_count, &mut rng);
 
@@ -457,7 +513,7 @@ pub fn fake_prep_main(
     for ss in rand_shares {
         assert_eq!(ss.len(), stream_vec.len());
         for ((_, stream), s) in stream_vec.iter_mut().zip(ss) {
-            let buf = bincode::serialize(&PreprocMsg::RandShare(s)).expect("cannot serialize using bincode");
+            let buf = bincode::serialize(&PrepMsg::RandShare(s)).expect("cannot serialize using bincode");
             write_length(stream, buf.len())?;
             stream.write_all(&buf)?;
         }
@@ -466,16 +522,17 @@ pub fn fake_prep_main(
     for ss in triples {
         assert_eq!(ss.len(), stream_vec.len());
         for ((_, stream), s) in stream_vec.iter_mut().zip(ss) {
-            let buf = bincode::serialize(&PreprocMsg::Triple(s)).expect("cannot serialize using bincode");
+            let buf = bincode::serialize(&PrepMsg::Triple(s)).expect("cannot serialize using bincode");
             write_length(stream, buf.len())?;
             stream.write_all(&buf)?;
         }
     }
+    // TODO maybe send periodic preprocessing messages?
     Ok(())
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crossbeam;
     use ron;
@@ -696,10 +753,10 @@ mod test {
             let len = read_length(&mut prep_stream)?;
             let mut buf = vec![0u8; len];
             prep_stream.read_exact(&mut buf)?;
-            let received_rand_share: PreprocMsg = bincode::deserialize(&buf)?;
+            let received_rand_share: PrepMsg = bincode::deserialize(&buf)?;
             match received_rand_share {
-                PreprocMsg::Triple(_) => assert!(false, "expected random share"),
-                PreprocMsg::RandShare(_) => {}
+                PrepMsg::Triple(_) => assert!(false, "expected random share"),
+                PrepMsg::RandShare(_) => {}
             }
         }
 
@@ -707,13 +764,26 @@ mod test {
             let len = read_length(&mut prep_stream)?;
             let mut buf = vec![0u8; len];
             prep_stream.read_exact(&mut buf)?;
-            let received_triple: PreprocMsg = bincode::deserialize(&buf)?;
+            let received_triple: PrepMsg = bincode::deserialize(&buf)?;
             match received_triple {
-                PreprocMsg::Triple(_) => {}
-                PreprocMsg::RandShare(_) => assert!(false, "expected triple"),
+                PrepMsg::Triple(_) => {}
+                PrepMsg::RandShare(_) => assert!(false, "expected triple"),
             }
         }
 
         handler.join().unwrap()
+    }
+
+    #[test]
+    fn test_read_prog() -> Result<(), ApplicationError> {
+        {
+            let prog = read_prog("prog/mul.ron")?;
+            assert_eq!(prog, vm::tests::MUL_PROG.to_vec());
+        }
+        {
+            let prog = read_prog("prog/io.ron")?;
+            assert_eq!(prog, vm::tests::IO_PROG.to_vec());
+        }
+        Ok(())
     }
 }

@@ -5,6 +5,7 @@ use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message::{PartyID, RandShareMsg, TripleMsg};
 
+use crate::error::MPCError::RegCreationError;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
@@ -37,6 +38,7 @@ impl Reg {
     }
 
     /// Construct a register from a vector of clear values and authenticated secret shares.
+    /// TODO consider change the type to `Vec<Option<Fp/AuthShare>>`
     pub fn from_vec(vclear: &Vec<Fp>, vsecret: &Vec<AuthShare>) -> Reg {
         let mut clear: [Option<Fp>; REG_SIZE] = Default::default();
         let mut secret: [Option<AuthShare>; REG_SIZE] = Default::default();
@@ -49,6 +51,34 @@ impl Reg {
             secret[i] = Some(vsecret[i].clone());
         }
         Reg { clear, secret }
+    }
+
+    /// Set a clear value.
+    pub fn set_clear(&mut self, i: usize, c: Fp) -> Option<()> {
+        self.clear.get_mut(i).map(|x| *x = Some(c))
+    }
+
+    pub fn from_prog(my_id: PartyID, prog: &Vec<Instruction>, inputs: Vec<Fp>) -> Result<Reg, MPCError> {
+        let mut reg_addrs = vec![];
+        for instruction in prog {
+            match instruction {
+                Instruction::Input(_, c1, id) => {
+                    if *id == my_id {
+                        reg_addrs.push(c1);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut reg = Reg::empty();
+        for (fp, reg_addr) in inputs.into_iter().zip(reg_addrs) {
+            match reg.set_clear(*reg_addr, fp) {
+                None => return Err(RegCreationError),
+                Some(()) => {}
+            }
+        }
+        Ok(reg)
     }
 }
 
@@ -85,7 +115,7 @@ pub enum Action {
 /// * `S` (e.g. `SAdd`): These operate on secret registers.
 /// * `M` (e.g. `MAdd`): These operate on secret and clear registers.
 /// Most instructions store the result in the register of the first operand.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
 pub enum Instruction {
     /// `CAdd(c0, c1, c2)` performs `creg[c0] <- creg[c1] + creg[c2]` in the clear.
     CAdd(RegAddr, RegAddr, RegAddr),
@@ -329,10 +359,38 @@ impl VM {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use num_traits::Zero;
     use quickcheck_macros::quickcheck;
+
+    pub(crate) const MUL_PROG: [Instruction; 15] = [
+        Instruction::Input(0, 0, 0),     // input [x]
+        Instruction::Input(1, 1, 1),     // input [y]
+        Instruction::Triple(2, 3, 4),    // [a], [b], [c]
+        Instruction::SSub(5, 0, 2),      // [e] <- [x] - [a]
+        Instruction::SSub(6, 1, 3),      // [d] <- [y] - [b]
+        Instruction::Open(5, 5),         // e <- open [e]
+        Instruction::Open(6, 6),         // d <- open [d]
+        Instruction::MMul(7, 3, 5),      // [b] * e
+        Instruction::MMul(8, 2, 6),      // d * [a]
+        Instruction::CMul(9, 5, 6),      // e*d
+        Instruction::SAdd(10, 4, 7),     // [c] + [e*b]
+        Instruction::SAdd(10, 10, 8),    //     + [d*a]
+        Instruction::MAdd(10, 10, 9, 0), //     + e*d
+        Instruction::SOutput(10),
+        Instruction::Stop,
+    ];
+
+    pub(crate) const IO_PROG: [Instruction; 7] = [
+        Instruction::Input(0, 0, 0),
+        Instruction::Input(1, 1, 1),
+        Instruction::Input(2, 2, 2),
+        Instruction::COutput(0),
+        Instruction::COutput(1),
+        Instruction::SOutput(2),
+        Instruction::Stop,
+    ];
 
     fn unauth_vec_to_reg(vclear: &Vec<Fp>, vsecret: &Vec<Fp>) -> Reg {
         let vv: Vec<_> = vsecret
@@ -406,6 +464,34 @@ mod tests {
         let result = simple_vm_runner(prog, reg).unwrap();
         assert_eq!(result.len(), 1);
         result[0].to_owned()
+    }
+
+    #[quickcheck]
+    fn prop_set_clear_reg(x: Fp) -> bool {
+        let mut reg = Reg::empty();
+        assert_eq!(reg.set_clear(REG_SIZE, x.clone()), None);
+
+        assert_eq!(reg.set_clear(REG_SIZE - 1, x.clone()), Some(()));
+        reg.clear[REG_SIZE - 1] == Some(x)
+    }
+
+    #[quickcheck]
+    fn prop_create_register(x: Fp, y: Fp) -> bool {
+        let mul_prog = MUL_PROG.to_vec();
+        let reg1 = Reg::from_prog(0, &mul_prog, vec![x.clone()]).unwrap();
+        let reg2 = Reg::from_prog(1, &mul_prog, vec![y.clone()]).unwrap();
+        reg1.clear[0] == Some(x) && reg2.clear[1] == Some(y)
+    }
+
+    #[quickcheck]
+    fn prop_create_register_from_bad_prog(x: Fp) -> bool {
+        // NOTE this test doesn't need to be a quickcheck test
+        let bad_prog = vec![Instruction::Input(0, REG_SIZE, 0)];
+        match Reg::from_prog(0, &bad_prog, vec![x.clone()]).unwrap_err() {
+            RegCreationError => {}
+            _ => panic!("expected to fail with RegCreationError"),
+        }
+        true
     }
 
     #[quickcheck]

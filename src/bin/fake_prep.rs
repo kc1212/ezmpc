@@ -21,7 +21,6 @@ fn main() -> Result<(), ezmpc::error::ApplicationError> {
             .index(1))
         .arg(Arg::new(PrivateConf::arg_name())
             .about("Set the private conf files to calculate alpha")
-            .multiple(true)
             .setting(clap::ArgSettings::MultipleValues))
         .arg(Arg::new(MAX_RAND_PER_PARTY_STR)
             .about("Set the maximum number of random shares per party")

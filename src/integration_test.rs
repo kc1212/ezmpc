@@ -10,7 +10,7 @@ use crate::crypto::*;
 use crate::message::*;
 use crate::party::Party;
 use crate::synchronizer::Synchronizer;
-use crate::vm;
+use crate::vm::{self, tests::IO_PROG, tests::MUL_PROG};
 
 const TEST_SEED: [u8; 32] = [8u8; 32];
 const TEST_CAP: usize = 5;
@@ -73,7 +73,7 @@ fn integration_test_clear_add() {
         preproc_receiver,
         vec![],
         vec![],
-        TEST_SEED,
+        Some(TEST_SEED),
     );
 
     let answer = party_handle.join().unwrap().unwrap();
@@ -104,9 +104,7 @@ fn integration_test_triple() {
     };
     let two = &one + &one;
 
-    preproc_sender
-        .send(PreprocMsg::new_triple(zero.clone(), one.clone(), two.clone()))
-        .unwrap();
+    preproc_sender.send(PrepMsg::new_triple(zero.clone(), one.clone(), two.clone())).unwrap();
 
     let fake_alpha_share = Fp::zero();
     let sync_handle = Synchronizer::spawn(sync_chans_for_sync.0, sync_chans_for_sync.1);
@@ -120,7 +118,7 @@ fn integration_test_triple() {
         preproc_receiver,
         vec![],
         vec![],
-        TEST_SEED,
+        Some(TEST_SEED),
     );
 
     let answer = party_handle.join().unwrap().unwrap();
@@ -149,18 +147,18 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
     // TODO this is more rand shares than we need, since we're giving every party max_rand_count number of shares
     let max_rand_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Input(_, _, _))).count();
     let triple_count = prog.iter().filter(|i| matches!(i, vm::Instruction::Triple(_, _, _))).count();
-    let preproc_chans = create_chans::<PreprocMsg>(n, triple_count + max_rand_count * n);
+    let preproc_chans = create_chans::<PrepMsg>(n, triple_count + max_rand_count * n);
     let (rand_shares, triples) = gen_fake_prep(n, &alpha, max_rand_count, triple_count, rng);
 
     for ss in rand_shares {
         for ((chan, _), s) in preproc_chans.iter().zip(ss) {
-            chan.send(PreprocMsg::RandShare(s)).unwrap();
+            chan.send(PrepMsg::RandShare(s)).unwrap();
         }
     }
 
     for ss in triples {
         for ((chan, _), s) in preproc_chans.iter().zip(ss) {
-            chan.send(PreprocMsg::Triple(s)).unwrap();
+            chan.send(PrepMsg::Triple(s)).unwrap();
         }
     }
 
@@ -178,7 +176,7 @@ fn generic_integration_test(n: usize, prog: Vec<vm::Instruction>, regs: Vec<vm::
                 preproc_chans[i].1.clone(),
                 get_row(&party_chans, i).into_iter().map(|(s, _)| s).collect(),
                 get_col(&party_chans, i).into_iter().map(|(_, r)| r).collect(),
-                TEST_SEED,
+                Some(TEST_SEED),
             );
             party_handle
         })
@@ -216,23 +214,6 @@ fn integration_test_open() {
 fn integration_test_mul() {
     // imagine x is at r0, y is at r1, we use beaver triples to multiply these two numbers
     let n = 3;
-    let prog = vec![
-        vm::Instruction::Input(0, 0, 0),     // input [x]
-        vm::Instruction::Input(1, 1, 1),     // input [y]
-        vm::Instruction::Triple(2, 3, 4),    // [a], [b], [c]
-        vm::Instruction::SSub(5, 0, 2),      // [e] <- [x] - [a]
-        vm::Instruction::SSub(6, 1, 3),      // [d] <- [y] - [b]
-        vm::Instruction::Open(5, 5),         // e <- open [e]
-        vm::Instruction::Open(6, 6),         // d <- open [d]
-        vm::Instruction::MMul(7, 3, 5),      // [b] * e
-        vm::Instruction::MMul(8, 2, 6),      // d * [a]
-        vm::Instruction::CMul(9, 5, 6),      // e*d
-        vm::Instruction::SAdd(10, 4, 7),     // [c] + [e*b]
-        vm::Instruction::SAdd(10, 10, 8),    //     + [d*a]
-        vm::Instruction::MAdd(10, 10, 9, 0), //     + e*d
-        vm::Instruction::SOutput(10),
-        vm::Instruction::Stop,
-    ];
 
     let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
     let input_0 = Fp::random(rng);
@@ -244,23 +225,13 @@ fn integration_test_mul() {
         vm::Reg::from_vec(&vec![Fp::zero(), input_1], &vec![]),
         vm::Reg::empty(),
     ];
-    generic_integration_test(n, prog, regs, expected, rng);
+    generic_integration_test(n, MUL_PROG.to_vec(), regs, expected, rng);
 }
 
 #[test]
 fn integration_test_input_output() {
     // TODO this test flaky when turning on RUST_LOG=debug and RUST_BACKTRACE=1
     let n = 3;
-    let prog = vec![
-        vm::Instruction::Input(0, 0, 0),
-        vm::Instruction::Input(1, 1, 1),
-        vm::Instruction::Input(2, 2, 2),
-        vm::Instruction::COutput(0),
-        vm::Instruction::COutput(1),
-        vm::Instruction::SOutput(2),
-        vm::Instruction::Stop,
-    ];
-
     let rng = &mut ChaCha20Rng::from_seed(TEST_SEED);
     let input_0 = Fp::random(rng);
     let input_1 = Fp::random(rng);
@@ -271,5 +242,5 @@ fn integration_test_input_output() {
         vm::Reg::from_vec(&vec![Fp::zero(), input_1, Fp::zero()], &vec![]),
         vm::Reg::from_vec(&vec![Fp::zero(), Fp::zero(), input_2], &vec![]),
     ];
-    generic_integration_test(n, prog, regs, expected, rng);
+    generic_integration_test(n, IO_PROG.to_vec(), regs, expected, rng);
 }

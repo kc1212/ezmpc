@@ -7,7 +7,7 @@ use crate::crypto::commit;
 use crate::crypto::AuthShare;
 use crate::error::{MACCheckError, MPCError, TIMEOUT};
 use crate::message;
-use crate::message::{PartyID, PartyMsg, PreprocMsg, SyncMsg, SyncReplyMsg};
+use crate::message::{PartyID, PartyMsg, PrepMsg, SyncMsg, SyncReplyMsg};
 use crate::vm;
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
@@ -25,7 +25,7 @@ pub struct Party {
     com_scheme: commit::Scheme,
     s_sync_chan: Sender<SyncReplyMsg>,
     r_sync_chan: Receiver<SyncMsg>,
-    preproc_chan: Receiver<PreprocMsg>,
+    preproc_chan: Receiver<PrepMsg>,
     s_party_chans: Vec<Sender<PartyMsg>>,
     r_party_chans: Vec<Receiver<PartyMsg>>,
 }
@@ -41,10 +41,10 @@ impl Party {
         prog: Vec<vm::Instruction>,
         s_sync_chan: Sender<SyncReplyMsg>,
         r_sync_chan: Receiver<SyncMsg>,
-        preproc_chan: Receiver<PreprocMsg>,
+        prep_chan: Receiver<PrepMsg>,
         s_party_chan: Vec<Sender<PartyMsg>>,
         r_party_chan: Vec<Receiver<PartyMsg>>,
-        rng_seed: [u8; 32],
+        rng_seed: Option<[u8; 32]>,
     ) -> thread::JoinHandle<Result<Vec<Fp>, MPCError>> {
         thread::spawn(move || {
             let p = Party {
@@ -53,7 +53,7 @@ impl Party {
                 com_scheme: commit::Scheme {},
                 s_sync_chan,
                 r_sync_chan,
-                preproc_chan,
+                preproc_chan: prep_chan,
                 s_party_chans: s_party_chan,
                 r_party_chans: r_party_chan,
             };
@@ -61,8 +61,11 @@ impl Party {
         })
     }
 
-    fn listen(&self, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: [u8; 32]) -> Result<Vec<Fp>, MPCError> {
-        let rng = &mut ChaCha20Rng::from_seed(rng_seed);
+    fn listen(&self, reg: vm::Reg, prog: Vec<vm::Instruction>, rng_seed: Option<[u8; 32]>) -> Result<Vec<Fp>, MPCError> {
+        let mut rng = match rng_seed {
+            None => ChaCha20Rng::from_entropy(),
+            Some(seed) => ChaCha20Rng::from_seed(seed),
+        };
 
         // init forwarding channels
         let (s_inner_triple_chan, r_inner_triple_chan) = bounded(FORWARDING_CAP);
@@ -97,10 +100,10 @@ impl Party {
                 recv(self.preproc_chan) -> x => {
                     debug!("[{}] got preproc msg {:?}", self.id, x);
                     match x? {
-                        PreprocMsg::Triple(msg) => {
+                        PrepMsg::Triple(msg) => {
                             s_inner_triple_chan.try_send(msg)?
                         }
-                        PreprocMsg::RandShare(msg) => {
+                        PrepMsg::RandShare(msg) => {
                             s_inner_rand_chan.try_send(msg)?
                         }
                     }
@@ -114,10 +117,10 @@ impl Party {
                 recv(self.preproc_chan) -> x => {
                     debug!("[{}] got preproc msg {:?}", self.id, x);
                     match x? {
-                        PreprocMsg::Triple(msg) => {
+                        PrepMsg::Triple(msg) => {
                             s_inner_triple_chan.try_send(msg)?
                         }
-                        PreprocMsg::RandShare(msg) => {
+                        PrepMsg::RandShare(msg) => {
                             s_inner_rand_chan.try_send(msg)?
                         }
                     }
@@ -139,7 +142,7 @@ impl Party {
                             // which means we cannot forward preprocessing data to the VM.
                             // then if the VM asks for more triples/rand shares when there's
                             // nothing in the channel buffer then the program crashes
-                            self.handle_vm_actions(&r_action_chan, rng)?;
+                            self.handle_vm_actions(&r_action_chan, &mut rng)?;
 
                             if instruction == vm::Instruction::Stop {
                                 self.s_sync_chan.send(SyncReplyMsg::Done)?;

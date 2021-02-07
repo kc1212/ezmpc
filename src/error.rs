@@ -4,6 +4,7 @@ use crate::algebra::Fp;
 use crate::message;
 use crate::vm;
 
+use base64::DecodeError;
 use bincode;
 use crossbeam::channel;
 use ron;
@@ -38,6 +39,8 @@ impl std::error::Error for MACCheckError {}
 pub enum MPCError {
     #[error("empty register")]
     EmptyError,
+    #[error("cannot create register")]
+    RegCreationError,
     #[error(transparent)]
     MACCheckError(#[from] MACCheckError),
     #[error(transparent)]
@@ -78,6 +81,10 @@ pub enum ApplicationError {
     ParseIntError(#[from] ParseIntError),
     #[error(transparent)]
     AddrParseError(#[from] AddrParseError),
+    #[error(transparent)]
+    Base64Error(#[from] DecodeError),
+    #[error(transparent)]
+    SendErrorEmpty(#[from] channel::SendError<()>),
     #[error(transparent)]
     MPCError(#[from] MPCError),
 }

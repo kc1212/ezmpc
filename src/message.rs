@@ -108,19 +108,19 @@ pub struct RandShareMsg {
 
 /// All types of preprocessing message are encapsulated by this type.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum PreprocMsg {
+pub enum PrepMsg {
     Triple(TripleMsg),
     RandShare(RandShareMsg),
 }
 
-impl PreprocMsg {
+impl PrepMsg {
     /// Create a new preprocessing message containing a triple.
-    pub fn new_triple(a: crypto::AuthShare, b: crypto::AuthShare, c: crypto::AuthShare) -> PreprocMsg {
-        PreprocMsg::Triple(TripleMsg::new(a, b, c))
+    pub fn new_triple(a: crypto::AuthShare, b: crypto::AuthShare, c: crypto::AuthShare) -> PrepMsg {
+        PrepMsg::Triple(TripleMsg::new(a, b, c))
     }
 
     /// Create a new preprocessing message containing a random sharing.
-    pub fn new_rand_share(share: crypto::AuthShare, clear: Option<Fp>, party_id: PartyID) -> PreprocMsg {
-        PreprocMsg::RandShare(RandShareMsg { share, clear, party_id })
+    pub fn new_rand_share(share: crypto::AuthShare, clear: Option<Fp>, party_id: PartyID) -> PrepMsg {
+        PrepMsg::RandShare(RandShareMsg { share, clear, party_id })
     }
 }
