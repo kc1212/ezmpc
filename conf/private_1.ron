@@ -1,5 +1,6 @@
 (
     id: 1,
     listen_addr: "[::1]:14271",
+    prep_addr: "[::1]:44444",
     alpha_share: "ngS++JPaVER19LutvDJ9jvbvY2jAD3034Ql2d4InXz8=",
 )

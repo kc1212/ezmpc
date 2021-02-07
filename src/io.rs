@@ -52,6 +52,7 @@ impl PublicConf {
 pub struct PrivateConf {
     pub id: PartyID,
     pub listen_addr: SocketAddr,
+    pub prep_addr: SocketAddr,
     #[serde(with = "fp_serde")]
     pub alpha_share: Fp,
 }
@@ -555,6 +556,7 @@ mod test {
             let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
             assert_eq!(private_conf.id, 0);
             assert_eq!(private_conf.listen_addr, "[::1]:14270".parse().unwrap());
+            assert_eq!(private_conf.prep_addr, "[::1]:44444".parse().unwrap());
             assert_eq!(private_conf.alpha_share.to_string(), "pv///1kAAABaqJMA8lZUjyAOGp0sDar9nfShXsMscz4=");
         }
         {
@@ -562,6 +564,7 @@ mod test {
             let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
             assert_eq!(private_conf.id, 1);
             assert_eq!(private_conf.listen_addr, "[::1]:14271".parse().unwrap());
+            assert_eq!(private_conf.prep_addr, "[::1]:44444".parse().unwrap());
             assert_eq!(private_conf.alpha_share.to_string(), "ngS++JPaVER19LutvDJ9jvbvY2jAD3034Ql2d4InXz8=");
         }
         {
@@ -569,6 +572,7 @@ mod test {
             let private_conf: PrivateConf = ron::from_str(&ron_str).unwrap();
             assert_eq!(private_conf.id, 2);
             assert_eq!(private_conf.listen_addr, "[::1]:14272".parse().unwrap());
+            assert_eq!(private_conf.prep_addr, "[::1]:44444".parse().unwrap());
             assert_eq!(private_conf.alpha_share.to_string(), "3gvur5vUxXSXFe+R0cd8QWhmN6rUMgDhIPWmvXnU714=");
         }
         Ok(())
