@@ -8,6 +8,8 @@ use bincode;
 use crossbeam::channel;
 use ron;
 use std::fmt;
+use std::net::AddrParseError;
+use std::num::ParseIntError;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -72,6 +74,10 @@ pub enum ApplicationError {
     RonError(#[from] ron::Error),
     #[error(transparent)]
     BincodeError(#[from] Box<bincode::ErrorKind>),
+    #[error(transparent)]
+    ParseIntError(#[from] ParseIntError),
+    #[error(transparent)]
+    AddrParseError(#[from] AddrParseError),
     #[error(transparent)]
     MPCError(#[from] MPCError),
 }
