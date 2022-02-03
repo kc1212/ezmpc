@@ -101,7 +101,7 @@ impl Zero for Fp {
     }
 
     fn is_zero(&self) -> bool {
-        self.0.is_zero()
+        self.0 == InnerFp::zero()
     }
 }
 

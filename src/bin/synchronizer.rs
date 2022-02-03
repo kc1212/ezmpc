@@ -9,11 +9,11 @@ fn main() -> Result<(), ezmpc::error::ApplicationError> {
     #[rustfmt::skip]
         let matches = App::new("ezmpc synchronizer")
         .arg(Arg::new(io::PublicConf::arg_name())
-            .about("Set the public .ron file")
+            .help("Set the public .ron file")
             .required(true)
             .index(1))
         .arg(Arg::new(io::SynchronizerConfig::arg_name())
-            .about("Set the synchronizer .ron file")
+            .help("Set the synchronizer .ron file")
             .required(true)
             .index(2))
         .get_matches();

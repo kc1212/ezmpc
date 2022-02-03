@@ -13,19 +13,19 @@ fn main() -> Result<(), ezmpc::error::ApplicationError> {
     #[rustfmt::skip]
     let matches = App::new("ezmpc online node")
         .arg(Arg::new(io::PublicConf::arg_name())
-            .about("Set the public .ron file")
+            .help("Set the public .ron file")
             .takes_value(true)
             .required(true))
         .arg(Arg::new(io::PrivateConf::arg_name())
-            .about("Set the private .ron file")
+            .help("Set the private .ron file")
             .takes_value(true)
             .required(true))
         .arg(Arg::new(PROG_FILE_STR)
-            .about("Set the program file")
+            .help("Set the program file")
             .required(true)
             .takes_value(true))
         .arg(Arg::new(INPUT_STR)
-            .about("Set the secret input to ezmpc")
+            .help("Set the secret input to ezmpc")
             .setting(clap::ArgSettings::MultipleValues))
         .get_matches();
 
